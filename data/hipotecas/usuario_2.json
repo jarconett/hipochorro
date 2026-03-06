@@ -1,0 +1,36 @@
+{
+  "hipotecas": [
+    {
+      "nombre_entidad": "BBVA",
+      "logo_path": null,
+      "nombre_hipoteca": "Fija25SB",
+      "duracion_anos": 25,
+      "cantidad_solicitada": 270000.0,
+      "valor_inmueble": 270000.0,
+      "pct_financiacion": 100.0,
+      "tin": 2.3,
+      "tae": 2.68,
+      "comision_amort_parcial": 2.0,
+      "mantenimiento": 240.0,
+      "mantenimiento_tarjeta": 0.0,
+      "tasacion": 375.1,
+      "bonif_nomina_eur": 0.0,
+      "seguro_hogar": 0.0,
+      "seguro_vida": 0.0,
+      "alarma": 0.0,
+      "proteccion_pagos": 0.0,
+      "pension": 0.0,
+      "bizum": false,
+      "tarjeta_credito": false,
+      "bonif_tin_seguro_hogar_pp": 0.0,
+      "bonif_tin_seguro_vida_pp": 0.0,
+      "bonif_tin_alarma_pp": 0.0,
+      "bonif_tin_proteccion_pagos_pp": 0.0,
+      "bonif_tin_pension_pp": 0.0,
+      "bonif_tin_bizum_pp": 0.0,
+      "bonif_tin_tarjeta_pp": 0.0,
+      "tin_base": 2.3,
+      "id": 1
+    }
+  ]
+}
