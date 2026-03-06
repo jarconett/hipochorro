@@ -87,7 +87,8 @@
       "años_bonif_bizum": 0,
       "años_bonif_tarjeta": 0,
       "tin_base": 2.4,
-      "id": 3
+      "id": 3,
+      "bonificacion_firma": 860.0
     }
   ]
 }
