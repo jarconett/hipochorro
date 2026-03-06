@@ -8,8 +8,8 @@
       "m2_utiles": 197.0,
       "piscina": false,
       "sotano": true,
-      "inmobiliaria": false,
-      "comision_venta_pct": 0.0,
+      "inmobiliaria": true,
+      "comision_venta_pct": 2.5,
       "url_anuncio": "https://www.idealista.com/inmueble/110670317/",
       "id": 1
     }
