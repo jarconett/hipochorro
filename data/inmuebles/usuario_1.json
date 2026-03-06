@@ -11,7 +11,12 @@
       "inmobiliaria": true,
       "comision_venta_pct": 2.5,
       "url_anuncio": "https://www.idealista.com/inmueble/110670317/",
-      "id": 1
+      "id": 1,
+      "habitaciones": 4,
+      "banos": 3,
+      "certificado_consumo": "E",
+      "certificado_emisiones": "D",
+      "notas": ""
     }
   ]
 }
