@@ -52,7 +52,7 @@
       "cantidad_solicitada": 277200.0,
       "valor_inmueble": 308000.0,
       "pct_financiacion": 90.0,
-      "tin": 2.15,
+      "tin": 2.4,
       "tae": 2.99,
       "meses_tin_bonificado": 12,
       "anos_bonif_amort_parcial": 10,
@@ -85,7 +85,7 @@
       "años_bonif_pension": 0,
       "años_bonif_bizum": 0,
       "años_bonif_tarjeta": 0,
-      "tin_base": 2.15,
+      "tin_base": 2.4,
       "id": 3
     }
   ]
