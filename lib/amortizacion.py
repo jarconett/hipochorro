@@ -26,6 +26,7 @@ def cuadro_amortizacion_anual(
     amortizacion_anual_extra: float = 0.0,
     modo: str = "reducir_cuota",
     plan_anual=None,
+    plan_tin_anual=None,
 ) -> List[dict]:
     """
     Genera cuadro por años con sistema francés.
@@ -39,6 +40,10 @@ def cuadro_amortizacion_anual(
     plan_anual:
       - Lista opcional de modos por año, longitud `num_anos`, con valores "reducir_cuota" o "reducir_plazo".
         Si se indica, tiene prioridad sobre `modo` y permite un enfoque mixto.
+
+    plan_tin_anual:
+      - Lista opcional de TIN (%) por año: plan_tin_anual[i] es el TIN del año i+1.
+        Si se indica, se usa en lugar de tin_anual_pct para ese año (permite bonificaciones que caducan).
     """
     capital = float(capital_inicial)
     tin = float(tin_anual_pct or 0)
@@ -46,7 +51,21 @@ def cuadro_amortizacion_anual(
     if num_anos <= 0 or capital <= 0:
         return []
 
-    # Normalizar plan anual
+    # TIN por año (bonificaciones con caducidad)
+    if plan_tin_anual is not None and len(plan_tin_anual) > 0:
+        plan_tin = []
+        for i in range(num_anos):
+            if i < len(plan_tin_anual):
+                try:
+                    plan_tin.append(float(plan_tin_anual[i]) if plan_tin_anual[i] is not None else tin)
+                except (TypeError, ValueError):
+                    plan_tin.append(tin)
+            else:
+                plan_tin.append(tin)
+    else:
+        plan_tin = [tin] * num_anos
+
+    # Normalizar plan anual (modo reducir_cuota / reducir_plazo)
     if plan_anual is None:
         modo = (modo or "reducir_cuota").strip().lower()
         if modo not in ("reducir_cuota", "reducir_plazo"):
@@ -60,33 +79,36 @@ def cuadro_amortizacion_anual(
         if len(plan) < num_anos:
             plan += ["reducir_cuota"] * (num_anos - len(plan))
 
-    i_mensual = (tin / 100.0) / 12.0
     resultado = []
 
-    def meses_para_saldar(cap: float, cuota: float) -> int:
-        """Meses necesarios para saldar cap con cuota fija (sistema francés)."""
+    def meses_para_saldar(cap: float, cuota: float, i_m: float) -> int:
+        """Meses necesarios para saldar cap con cuota fija (sistema francés). i_m = tipo mensual."""
         if cap <= 0:
             return 0
         if cuota <= 0:
             return 10**9
-        if abs(i_mensual) < 1e-12:
+        if abs(i_m) < 1e-12:
             return int(math.ceil(cap / cuota))
-        # Si la cuota no cubre intereses, no amortiza
-        if cuota <= cap * i_mensual:
+        if cuota <= cap * i_m:
             return 10**9
-        n = math.log(cuota / (cuota - cap * i_mensual)) / math.log(1 + i_mensual)
+        n = math.log(cuota / (cuota - cap * i_m)) / math.log(1 + i_m)
         return int(math.ceil(n))
 
     meses_restantes_programados = num_anos * 12
-    cuota_actual = cuota_mensual_frances(capital, tin, meses_restantes_programados)
+    tin_ano = plan_tin[0]
+    i_mensual = (tin_ano / 100.0) / 12.0
+    cuota_actual = cuota_mensual_frances(capital, tin_ano, meses_restantes_programados)
 
     for ano in range(1, num_anos + 1):
         if capital <= 0:
             break
 
+        tin_ano = plan_tin[ano - 1]
+        i_mensual = (tin_ano / 100.0) / 12.0
+
         modo_ano = plan[ano - 1]
         if modo_ano == "reducir_cuota":
-            cuota_actual = cuota_mensual_frances(capital, tin, max(1, meses_restantes_programados))
+            cuota_actual = cuota_mensual_frances(capital, tin_ano, max(1, meses_restantes_programados))
 
         intereses_ano = 0.0
         amortizado_ano = 0.0
@@ -133,6 +155,6 @@ def cuadro_amortizacion_anual(
         if modo_ano == "reducir_cuota":
             meses_restantes_programados = max(0, meses_restantes_programados - meses_pagados)
         else:
-            meses_restantes_programados = meses_para_saldar(capital, cuota_actual)
+            meses_restantes_programados = meses_para_saldar(capital, cuota_actual, i_mensual)
 
     return resultado
