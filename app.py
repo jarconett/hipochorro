@@ -778,6 +778,42 @@ def comparador(usuario_id: int):
         key="amort_anual_comp",
     )
 
+    modo_amort = st.selectbox(
+        "Aplicar amortización extraordinaria para…",
+        [
+            "Reducir cuota (mantener plazo)",
+            "Reducir plazo (mantener cuota)",
+            "Mixto (repartir años entre cuota y plazo)",
+        ],
+        key="modo_amortizacion_comp",
+    )
+    modo_tipo = (
+        "reducir_cuota" if modo_amort.startswith("Reducir cuota")
+        else ("reducir_plazo" if modo_amort.startswith("Reducir plazo") else "mixto")
+    )
+
+    plan_params = None
+    if modo_tipo == "mixto":
+        max_anos = max(int(h.get("duracion_anos", 0) or 0) for h in elegidas) if elegidas else 0
+        st.markdown("#### Modo mixto")
+        orden = st.radio(
+            "¿Qué priorizas primero?",
+            [
+                "Primero reducir plazo y luego reducir cuota",
+                "Primero reducir cuota y luego reducir plazo",
+            ],
+            key="mixto_orden",
+        )
+        anos_fase1 = st.slider(
+            "Años dedicados a la primera fase",
+            min_value=0,
+            max_value=max_anos if max_anos > 0 else 1,
+            value=min(5, max_anos) if max_anos > 0 else 0,
+            step=1,
+            key="mixto_anos_fase1",
+        )
+        plan_params = {"orden": orden, "anos_fase1": int(anos_fase1), "max_anos": int(max_anos)}
+
     st.markdown("#### Precios externos (para comparar seguros fuera del banco)")
     st.caption(
         "Seguro hogar: se usa como **obligatorio** en hipotecas sin vinculación y **tras los años de bonificación** "
@@ -814,42 +850,6 @@ def comparador(usuario_id: int):
         "seguro_vida": precio_ext_seguro_vida,
         "alarma": precio_ext_alarma,
     }
-
-    modo_amort = st.selectbox(
-        "Aplicar amortización extraordinaria para…",
-        [
-            "Reducir cuota (mantener plazo)",
-            "Reducir plazo (mantener cuota)",
-            "Mixto (repartir años entre cuota y plazo)",
-        ],
-        key="modo_amortizacion_comp",
-    )
-    modo_tipo = (
-        "reducir_cuota" if modo_amort.startswith("Reducir cuota")
-        else ("reducir_plazo" if modo_amort.startswith("Reducir plazo") else "mixto")
-    )
-
-    plan_params = None
-    if modo_tipo == "mixto":
-        max_anos = max(int(h.get("duracion_anos", 0) or 0) for h in elegidas) if elegidas else 0
-        st.markdown("#### Modo mixto")
-        orden = st.radio(
-            "¿Qué priorizas primero?",
-            [
-                "Primero reducir plazo y luego reducir cuota",
-                "Primero reducir cuota y luego reducir plazo",
-            ],
-            key="mixto_orden",
-        )
-        anos_fase1 = st.slider(
-            "Años dedicados a la primera fase",
-            min_value=0,
-            max_value=max_anos if max_anos > 0 else 1,
-            value=min(5, max_anos) if max_anos > 0 else 0,
-            step=1,
-            key="mixto_anos_fase1",
-        )
-        plan_params = {"orden": orden, "anos_fase1": int(anos_fase1), "max_anos": int(max_anos)}
 
     st.markdown("### Criterio de comparación")
     criterio = st.selectbox(
