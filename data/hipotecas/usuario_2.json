@@ -72,7 +72,7 @@
       "cantidad_solicitada": 270000.0,
       "valor_inmueble": 430000.0,
       "pct_financiacion": 62.8,
-      "tin": 2.9,
+      "tin": 2.4,
       "tae": 2.94,
       "comision_amort_parcial": 1.0,
       "mantenimiento": 120.0,
@@ -93,7 +93,7 @@
       "bonif_tin_pension_pp": 0.0,
       "bonif_tin_bizum_pp": 0.0,
       "bonif_tin_tarjeta_pp": 0.0,
-      "tin_base": 2.9,
+      "tin_base": 2.4,
       "id": 3
     }
   ]
