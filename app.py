@@ -597,6 +597,10 @@ def _coste_anual_vinculados_año(
     Coste de vinculaciones en un año concreto.
     Solo se incluye el coste de cada producto si su bonificación sigue vigente ese año
     (años_bonif es 0 = todo el préstamo, o años_bonif >= ano).
+
+    Seguro de hogar (obligatorio):
+    - Hipoteca CON bonificación/vinculación: años 1..años_bonif usa coste banco; pasados esos años usa seguro externo.
+    - Hipoteca SIN vinculación seguro hogar: todos los años usa el coste del seguro externo obligatorio.
     """
     precios_externos = precios_externos or {}
     total = 0.0
@@ -605,12 +609,16 @@ def _coste_anual_vinculados_año(
     # Nómina descuento €: solo si aplica ese año
     if _anos_bonif(h, "nomina") == 0 or _anos_bonif(h, "nomina") >= ano:
         total -= _bonif_nomina_eur(h)
-    # Seguros y alarma: coste solo los años que aplica la bonificación (mismo periodo)
-    if _anos_bonif(h, "seguro_hogar") == 0 or _anos_bonif(h, "seguro_hogar") >= ano:
-        v = _f(h, "seguro_hogar", 0.0)
-        if usar_externos and precios_externos.get("seguro_hogar") is not None:
-            v = float(precios_externos.get("seguro_hogar", v) or v)
-        total += v
+    # Seguro de hogar: obligatorio. Con bonificación → años de bonif = coste banco; resto = externo. Sin vinculación → siempre externo.
+    tiene_seguro_hogar_vinculado = _f(h, "seguro_hogar", 0.0) > 0 or _f(h, "bonif_tin_seguro_hogar_pp", 0.0) > 0
+    anos_bonif_sh = _anos_bonif(h, "seguro_hogar")
+    if tiene_seguro_hogar_vinculado:
+        if anos_bonif_sh == 0 or ano <= anos_bonif_sh:
+            total += _f(h, "seguro_hogar", 0.0)
+        else:
+            total += float(precios_externos.get("seguro_hogar", 0) or 0)
+    else:
+        total += float(precios_externos.get("seguro_hogar", 0) or 0)
     if _anos_bonif(h, "seguro_vida") == 0 or _anos_bonif(h, "seguro_vida") >= ano:
         v = _f(h, "seguro_vida", 0.0)
         if usar_externos and precios_externos.get("seguro_vida") is not None:
@@ -771,10 +779,14 @@ def comparador(usuario_id: int):
     )
 
     st.markdown("#### Precios externos (para comparar seguros fuera del banco)")
+    st.caption(
+        "Seguro hogar: se usa como **obligatorio** en hipotecas sin vinculación y **tras los años de bonificación** "
+        "en hipotecas que lo tienen vinculado."
+    )
     col_ext1, col_ext2, col_ext3 = st.columns(3)
     with col_ext1:
         precio_ext_seguro_hogar = st.number_input(
-            "Seguro hogar externo (€/año)",
+            "Seguro hogar externo / obligatorio (€/año)",
             min_value=0.0,
             value=0.0,
             step=20.0,
