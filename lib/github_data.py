@@ -34,6 +34,8 @@ def _repo():
 DATA_DIR = "data"
 USUARIOS_FILE = f"{DATA_DIR}/usuarios.json"
 HIPOTECAS_DIR = f"{DATA_DIR}/hipotecas"
+INMUEBLES_DIR = f"{DATA_DIR}/inmuebles"
+INMUEBLES_FOTOS_DIR = f"{DATA_DIR}/inmuebles_fotos"
 LOGOS_DIR = f"{DATA_DIR}/logos"
 
 def _slug(texto: str) -> str:
@@ -192,3 +194,97 @@ def subir_logo_desde_bytes(entidad_nombre: str, image_bytes: bytes) -> Optional[
 def get_logo_raw_url(logo_path: str, branch: str = "main") -> str:
     """Construye URL raw de GitHub para un path en el repo."""
     return f"https://raw.githubusercontent.com/jarconett/hipochorro/{branch}/{logo_path}"
+
+
+# --- Inmuebles (agenda de viviendas) ---
+
+def get_inmuebles(usuario_id: int) -> list:
+    """Lee inmuebles de un usuario desde GitHub."""
+    repo = _repo()
+    if not repo:
+        return []
+    path = f"{INMUEBLES_DIR}/usuario_{usuario_id}.json"
+    try:
+        c = repo.get_contents(path)
+        data = json.loads(base64.b64decode(c.content).decode())
+        return data.get("inmuebles", [])
+    except Exception:
+        return []
+
+
+def guardar_inmuebles(usuario_id: int, inmuebles: list) -> bool:
+    """Guarda inmuebles de un usuario en GitHub."""
+    repo = _repo()
+    if not repo:
+        return False
+    path = f"{INMUEBLES_DIR}/usuario_{usuario_id}.json"
+    contenido = json.dumps({"inmuebles": inmuebles}, indent=2, ensure_ascii=False)
+    try:
+        c = repo.get_contents(path)
+        repo.update_file(path, "Actualizar inmuebles", contenido, c.sha)
+    except Exception:
+        try:
+            repo.create_file(path, "Crear inmuebles usuario", contenido)
+        except Exception:
+            return False
+    return True
+
+
+def añadir_inmueble(usuario_id: int, inmueble: dict) -> Optional[dict]:
+    """Añade un inmueble y devuelve el objeto con id."""
+    inmuebles = get_inmuebles(usuario_id)
+    iid = max([inv.get("id", 0) for inv in inmuebles], default=0) + 1
+    inmueble["id"] = iid
+    inmuebles.append(inmueble)
+    if guardar_inmuebles(usuario_id, inmuebles):
+        return inmueble
+    return None
+
+
+def actualizar_inmueble(usuario_id: int, inmueble: dict) -> bool:
+    """Actualiza un inmueble existente por id."""
+    inmuebles = get_inmuebles(usuario_id)
+    for i, inv in enumerate(inmuebles):
+        if inv.get("id") == inmueble.get("id"):
+            inmuebles[i] = inmueble
+            return guardar_inmuebles(usuario_id, inmuebles)
+    return False
+
+
+def _ruta_fotos_inmueble(usuario_id: int, inmueble_id: int) -> str:
+    return f"{INMUEBLES_FOTOS_DIR}/u{usuario_id}_i{inmueble_id}"
+
+
+def subir_foto_inmueble(usuario_id: int, inmueble_id: int, imagen_bytes: bytes, indice: int) -> Optional[str]:
+    """Sube una foto de inmueble al repo. indice empieza en 1. Devuelve path en repo o None."""
+    repo = _repo()
+    if not repo:
+        return None
+    base = _ruta_fotos_inmueble(usuario_id, inmueble_id)
+    path = f"{base}/foto_{indice}.jpg"
+    try:
+        try:
+            c = repo.get_contents(path)
+            repo.update_file(path, f"Actualizar foto inmueble {inmueble_id}", imagen_bytes, c.sha)
+        except Exception:
+            repo.create_file(path, f"Añadir foto inmueble {inmueble_id}", imagen_bytes)
+        return path
+    except Exception:
+        return None
+
+
+def get_fotos_inmueble_urls(usuario_id: int, inmueble_id: int, branch: str = "main") -> list:
+    """Devuelve lista de URLs raw de las fotos del inmueble en GitHub."""
+    repo = _repo()
+    if not repo:
+        return []
+    base = _ruta_fotos_inmueble(usuario_id, inmueble_id)
+    try:
+        contents = repo.get_contents(base)
+        urls = []
+        for c in contents:
+            if c.name.endswith((".jpg", ".jpeg", ".png")):
+                urls.append(get_logo_raw_url(c.path, branch))
+        return sorted(urls)
+    except Exception:
+        return []

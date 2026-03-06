@@ -10,10 +10,12 @@ _root = Path(__file__).resolve().parent
 if str(_root) not in sys.path:
     sys.path.insert(0, str(_root))
 
+import re
 import streamlit as st
 import pandas as pd
 import requests
 from io import BytesIO
+from urllib.parse import urljoin, urlparse
 
 from lib import github_data as ghd
 from lib import amortizacion as am
@@ -38,6 +40,10 @@ HELP_TAE = (
     "incluyendo interés (TIN), comisiones de apertura y otros gastos obligatorios. Sirve para comparar ofertas entre bancos. "
     "Ejemplo: TIN 3,5% con TAE 3,8% indica que las comisiones y gastos elevan el coste real al equivalente de 3,8% anual."
 )
+
+# Nombre del secret en Streamlit Cloud para el token de Apify (Idealista).
+# En Streamlit Cloud: Settings → Secrets → clave "APIFY_TOKEN_SECRET" con tu API token de apify.com
+APIFY_TOKEN_SECRET = "APIFY_TOKEN_SECRET"
 
 
 def _cargar_imagen(path: Path):
@@ -66,6 +72,10 @@ if "usuario_actual" not in st.session_state:
     st.session_state.usuario_actual = None
 if "hipotecas_cache" not in st.session_state:
     st.session_state.hipotecas_cache = []
+if "inmueble_seleccionado" not in st.session_state:
+    st.session_state.inmueble_seleccionado = None  # dict del inmueble o None
+if "fotos_extraidas" not in st.session_state:
+    st.session_state.fotos_extraidas = None  # {"inmueble_id": int, "urls": [str]} o None
 
 
 def intentar_logo_desde_dominio(dominio: str):
@@ -87,9 +97,202 @@ def intentar_logo_desde_dominio(dominio: str):
     return None
 
 
+# Headers para peticiones a portales (Idealista, etc.)
+_REQUEST_HEADERS = {
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
+    "Accept-Language": "es-ES,es;q=0.9,en;q=0.8",
+}
+
+
+def _extraer_urls_desde_json(html: str, url_base: str) -> list:
+    """Busca en el HTML JSON embebido (Idealista, etc.) y extrae URLs de imágenes."""
+    urls = []
+    # Patrones típicos: "url":"https://...", "src":"https://...", multimedia, gallery, images
+    patron = re.compile(r'["\'](?:url|src|image|href)["\']\s*:\s*["\'](https?://[^"\']+\.(?:jpg|jpeg|png|webp)(?:\?[^"\']*)?)["\']', re.I)
+    for m in patron.finditer(html):
+        u = m.group(1)
+        if any(x in u.lower() for x in ("logo", "icon", "pixel", "avatar", "banner", "cookie", "tracking")):
+            continue
+        urls.append(u)
+    # Idealista: a veces usa "multimedia": [{"url": "..."}] o "images": ["..."]
+    patron2 = re.compile(r'https?://(?:img\d*\.)?idealista\.(?:com|pt|it)[^"\')\s]+\.(?:jpg|jpeg|png|webp)(?:\?[^"\')\s]*)?', re.I)
+    for m in patron2.finditer(html):
+        urls.append(m.group(0))
+    return list(dict.fromkeys(urls))
+
+
+def _extraer_id_idealista(url: str) -> str | None:
+    """Extrae el ID de inmueble de una URL de Idealista. Ej: .../inmueble/110670317/ -> 110670317."""
+    if not url or "idealista" not in url.lower():
+        return None
+    m = re.search(r"idealista\.(?:com|pt|it)/inmueble/(\d+)", url, re.I)
+    return m.group(1) if m else None
+
+
+def _obtener_imagenes_idealista_zenrows(url_anuncio: str, property_id: str, api_key: str) -> list:
+    """Obtiene URLs de imágenes de un anuncio Idealista vía API ZenRows. Requiere ZENROWS_API_KEY."""
+    try:
+        endpoint = f"https://realestate.api.zenrows.com/v1/targets/idealista/properties/{property_id}"
+        r = requests.get(endpoint, params={"apikey": api_key, "url": url_anuncio}, headers=_REQUEST_HEADERS, timeout=25)
+        if r.status_code != 200:
+            return []
+        data = r.json()
+        images = data.get("property_images") or data.get("images") or []
+        if isinstance(images, list):
+            return [u for u in images if isinstance(u, str) and u.startswith("http") and (".jpg" in u or ".jpeg" in u or ".png" in u or ".webp" in u)]
+        return []
+    except Exception:
+        return []
+
+
+def _obtener_imagenes_idealista_apify(url_anuncio: str, api_token: str) -> list:
+    """Obtiene URLs de imágenes de un anuncio Idealista vía Apify (actor Idealista Property Listing Scraper). Requiere APIFY_TOKEN en secrets."""
+    try:
+        from apify_client import ApifyClient
+        client = ApifyClient(api_token)
+        run_input = {
+            "startUrls": [{"url": url_anuncio}],
+            "maxRequestsPerCrawl": 1,
+            "maxConcurrency": 1,
+        }
+        run = client.actor("duncan01/idealista-property-listing-scraper").call(run_input=run_input)
+        items = list(client.dataset(run["defaultDatasetId"]).iterate_items())
+        urls = []
+        for item in items:
+            for key in ("images", "property_images", "propertyImages", "photos", "imageUrls"):
+                val = item.get(key)
+                if isinstance(val, list):
+                    for u in val:
+                        if isinstance(u, str) and u.startswith("http") and (".jpg" in u or ".jpeg" in u or ".png" in u or ".webp" in u):
+                            urls.append(u)
+                elif isinstance(val, str) and val.startswith("http"):
+                    urls.append(val)
+        return list(dict.fromkeys(urls))
+    except Exception:
+        return []
+
+
+def extraer_urls_imagenes_anuncio(url_anuncio: str, max_urls: int = 50) -> list:
+    """
+    Extrae URLs de imágenes de una página de anuncio (Idealista y otros).
+    Para Idealista: si está configurado ZENROWS_API_KEY usa ZenRows; si no, APIFY_TOKEN usa Apify.
+    Si no hay ninguna key, intenta extraer del HTML (puede fallar con 403 en Idealista).
+    Devuelve lista de URLs para que el usuario elija cuáles añadir a la ficha.
+    """
+    if not url_anuncio or not url_anuncio.strip().startswith("http"):
+        return []
+    url_anuncio = url_anuncio.strip()
+    # Opción 1: Idealista + ZenRows API (evita 403)
+    import os
+    zenrows_key = os.environ.get("ZENROWS_API_KEY") or (st.secrets.get("ZENROWS_API_KEY") if hasattr(st, "secrets") else None)
+    property_id = _extraer_id_idealista(url_anuncio)
+    if property_id and zenrows_key:
+        urls = _obtener_imagenes_idealista_zenrows(url_anuncio, property_id, zenrows_key)
+        if urls:
+            return urls[:max_urls]
+    # Opción 2: Idealista + Apify (actor por URL; configurar APIFY_TOKEN en secrets)
+    apify_token = os.environ.get(APIFY_TOKEN_SECRET) or (st.secrets.get(APIFY_TOKEN_SECRET) if hasattr(st, "secrets") else None)
+    if property_id and apify_token:
+        urls = _obtener_imagenes_idealista_apify(url_anuncio, apify_token)
+        if urls:
+            return urls[:max_urls]
+    # Opción 3: Scraping directo del HTML
+    try:
+        from bs4 import BeautifulSoup
+        r = requests.get(url_anuncio, headers=_REQUEST_HEADERS, timeout=20)
+        html = r.text
+        # Si 403 o 401, intentar parsear solo si el cuerpo parece una página completa (p. ej. algunos CDN)
+        if r.status_code not in (200, 201) and (len(html) < 5000 or "idealista" not in html.lower()):
+            if r.status_code == 403 and "idealista" in url_anuncio.lower():
+                raise ValueError(
+                    "Idealista ha bloqueado la petición (403). Configura APIFY_TOKEN o ZENROWS_API_KEY en secrets "
+                    "(ver docs/IDEALISTA_SCRAPING.md) o añade las fotos manualmente."
+                )
+            r.raise_for_status()
+        soup = BeautifulSoup(html, "html.parser")
+        seen = set()
+        urls = []
+
+        # 1) Idealista y portales: JSON embebido en script
+        for script in soup.find_all("script", type=re.compile("json|ld\\+json", re.I)):
+            if script.string:
+                urls.extend(_extraer_urls_desde_json(script.string, url_anuncio))
+        urls.extend(_extraer_urls_desde_json(html, url_anuncio))
+
+        # 2) Atributos data-src, data-lazy-src, data-srcset (común en galerías)
+        for img in soup.find_all("img"):
+            for attr in ("src", "data-src", "data-lazy-src", "data-srcset"):
+                val = img.get(attr)
+                if not val:
+                    continue
+                # data-srcset puede ser "url1 1x, url2 2x"
+                for part in val.split(","):
+                    part = part.strip().split()[0] if part.strip() else part.strip()
+                    if part and (part.endswith(".jpg") or ".jpeg" in part or ".png" in part or ".webp" in part):
+                        if not part.startswith("http"):
+                            part = urljoin(url_anuncio, part)
+                        if part not in seen and len(part) > 20:
+                            s = part.lower()
+                            if not any(x in s for x in ("logo", "icon", "pixel", "avatar", "banner", "cookie")):
+                                seen.add(part)
+                                urls.append(part)
+                                break
+
+        # 3) Enlaces directos src de img
+        for img in soup.find_all("img"):
+            src = img.get("src")
+            if not src or len(src) < 15:
+                continue
+            if not src.startswith("http"):
+                src = urljoin(url_anuncio, src)
+            if src in seen:
+                continue
+            s = src.lower()
+            if any(x in s for x in ("logo", "icon", "pixel", "avatar", "banner", "cookie")):
+                continue
+            if ".jpg" in s or ".jpeg" in s or ".png" in s or ".webp" in s:
+                seen.add(src)
+                urls.append(src)
+
+        # Orden estable y límite
+        return list(dict.fromkeys(urls))[:max_urls]
+    except ValueError:
+        raise
+    except Exception:
+        return []
+
+
+def _descargar_imagen_bytes(url: str) -> bytes | None:
+    """Descarga una imagen desde URL y devuelve los bytes, o None si falla."""
+    try:
+        r = requests.get(url, headers=_REQUEST_HEADERS, timeout=12)
+        if r.status_code == 200 and len(r.content) > 500:
+            return r.content
+    except Exception:
+        pass
+    return None
+
+
+def _coste_total_inmueble(inv: dict) -> float:
+    """Coste total de compra: importe + comisión si es inmobiliaria."""
+    imp = float(inv.get("importe", 0) or 0)
+    if inv.get("inmobiliaria"):
+        com = float(inv.get("comision_venta_pct", 0) or 0) / 100.0
+        return imp * (1 + com)
+    return imp
+
+
 def formulario_hipoteca(usuario_id: int):
     """Formulario de alta de hipoteca con todos los campos."""
     st.subheader("Alta de hipoteca bancaria")
+    inv_sel = st.session_state.get("inmueble_seleccionado")
+    def_valor = 150000.0
+    def_cantidad = 150000.0
+    if inv_sel and isinstance(inv_sel, dict):
+        def_valor = _coste_total_inmueble(inv_sel)
+        def_cantidad = round(def_valor * 0.8, 0)
+        st.caption(f"💡 Valores sugeridos por el inmueble seleccionado en el sidebar: {inv_sel.get('localizacion', '')} — coste total {def_valor:,.0f} €")
     logo_subir = st.file_uploader("Logo: sube imagen (PNG/JPG) si no usas dominio", type=["png", "jpg", "jpeg"], key="logo_upload")
     with st.form("form_hipoteca"):
         nombre_entidad = st.text_input("Nombre entidad *", placeholder="Ej: BBVA, Santander, CaixaBank")
@@ -99,8 +302,8 @@ def formulario_hipoteca(usuario_id: int):
         )
         nombre_hipoteca = st.text_input("Nombre de la hipoteca *", placeholder="Ej: Hipoteca Fija 25 años")
         duracion_anos = st.number_input("Duración del préstamo (años) *", min_value=1, max_value=40, value=25)
-        cantidad_solicitada = st.number_input("Cantidad solicitada (€) *", min_value=0.0, value=150000.0, step=5000.0)
-        valor_inmueble = st.number_input("Valor del inmueble (€)", min_value=0.0, value=cantidad_solicitada, step=5000.0)
+        cantidad_solicitada = st.number_input("Cantidad solicitada (€) *", min_value=0.0, value=def_cantidad, step=5000.0)
+        valor_inmueble = st.number_input("Valor del inmueble (€)", min_value=0.0, value=def_valor, step=5000.0)
         if valor_inmueble > 0:
             pct_financiacion = round(100 * cantidad_solicitada / valor_inmueble, 1)
             st.caption(f"Porcentaje de financiación: {pct_financiacion}%")
@@ -752,8 +955,160 @@ def _resumen_costes_hipoteca(
     }
 
 
+def _editor_inmueble(usuario_id: int, inv: dict):
+    """Formulario de edición de un inmueble en expander."""
+    inv_id = inv.get("id")
+    with st.form(f"form_edit_inm_{inv_id}"):
+        importe = st.number_input("Importe (€)", min_value=0.0, value=float(inv.get("importe", 0) or 0), step=5000.0, key=f"ei_imp_{inv_id}")
+        localizacion = st.text_input("Localización", value=inv.get("localizacion", "") or "", key=f"ei_loc_{inv_id}")
+        ano_construccion = st.number_input("Año construcción", min_value=1800, max_value=2030, value=int(inv.get("ano_construccion", 0) or 0), step=1, key=f"ei_ano_{inv_id}")
+        m2_construidos = st.number_input("m² construidos", min_value=0.0, value=float(inv.get("m2_construidos", 0) or 0), step=1.0, key=f"ei_m2c_{inv_id}")
+        m2_utiles = st.number_input("m² útiles", min_value=0.0, value=float(inv.get("m2_utiles", 0) or 0), step=1.0, key=f"ei_m2u_{inv_id}")
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            piscina = st.checkbox("Piscina", value=bool(inv.get("piscina", False)), key=f"ei_pis_{inv_id}")
+        with col2:
+            sotano = st.checkbox("Sótano", value=bool(inv.get("sotano", False)), key=f"ei_sot_{inv_id}")
+        with col3:
+            inmobiliaria = st.checkbox("Venta por inmobiliaria", value=bool(inv.get("inmobiliaria", False)), key=f"ei_inm_{inv_id}")
+        comision_venta_pct = st.number_input("% comisión venta (inmobiliaria)", min_value=0.0, max_value=20.0, value=float(inv.get("comision_venta_pct", 0) or 0), step=0.5, key=f"ei_com_{inv_id}")
+        url_anuncio = st.text_input("URL del anuncio", value=inv.get("url_anuncio", "") or "", key=f"ei_url_{inv_id}")
+        if st.form_submit_button("Guardar cambios"):
+            inv_act = {**inv, "importe": importe, "localizacion": localizacion, "ano_construccion": int(ano_construccion), "m2_construidos": m2_construidos, "m2_utiles": m2_utiles, "piscina": piscina, "sotano": sotano, "inmobiliaria": inmobiliaria, "comision_venta_pct": comision_venta_pct, "url_anuncio": url_anuncio.strip()}
+            if ghd.actualizar_inmueble(usuario_id, inv_act):
+                st.success("Inmueble actualizado.")
+                st.rerun()
+            else:
+                st.error("Error al guardar.")
+    if st.button("Eliminar inmueble", key=f"del_inv_{inv_id}"):
+        inmuebles = [x for x in ghd.get_inmuebles(usuario_id) if x.get("id") != inv_id]
+        if ghd.guardar_inmuebles(usuario_id, inmuebles):
+            if st.session_state.get("inmueble_seleccionado") and st.session_state.inmueble_seleccionado.get("id") == inv_id:
+                st.session_state.inmueble_seleccionado = None
+            st.success("Inmueble eliminado.")
+            st.rerun()
+        else:
+            st.error("Error al eliminar.")
+
+
+def agenda_inmuebles(usuario_id: int):
+    """Pestaña agenda de inmuebles: alta, listado y fotos desde URL."""
+    st.subheader("Agenda de inmuebles")
+    st.caption("Alta de viviendas a comparar. En cada ficha puedes usar «Obtener fotos desde anuncio» (URL del anuncio) y elegir qué imágenes añadir.")
+    with st.form("form_inmueble"):
+        importe = st.number_input("Importe de la vivienda (€) *", min_value=0.0, value=150000.0, step=5000.0)
+        localizacion = st.text_input("Localización", placeholder="Ej: Madrid, zona Norte")
+        ano_construccion = st.number_input("Año de construcción", min_value=1800, max_value=2030, value=2000, step=1)
+        m2_construidos = st.number_input("m² construidos", min_value=0.0, value=90.0, step=1.0)
+        m2_utiles = st.number_input("m² útiles", min_value=0.0, value=75.0, step=1.0)
+        piscina = st.checkbox("Piscina", value=False)
+        sotano = st.checkbox("Sótano", value=False)
+        tipo_venta = st.radio("Tipo de venta", ["Particular", "Inmobiliaria"], horizontal=True)
+        inmobiliaria = tipo_venta == "Inmobiliaria"
+        comision_venta_pct = st.number_input("% comisión por la venta (solo inmobiliaria)", min_value=0.0, max_value=20.0, value=3.0, step=0.5)
+        url_anuncio = st.text_input("URL del anuncio (portal inmobiliario)", placeholder="https://...")
+        if st.form_submit_button("Dar de alta inmueble"):
+            inv = {
+                "importe": float(importe),
+                "localizacion": (localizacion or "").strip(),
+                "ano_construccion": int(ano_construccion),
+                "m2_construidos": float(m2_construidos),
+                "m2_utiles": float(m2_utiles),
+                "piscina": bool(piscina),
+                "sotano": bool(sotano),
+                "inmobiliaria": bool(inmobiliaria),
+                "comision_venta_pct": float(comision_venta_pct) if inmobiliaria else 0.0,
+                "url_anuncio": (url_anuncio or "").strip(),
+            }
+            nuevo = ghd.añadir_inmueble(usuario_id, inv)
+            if nuevo:
+                st.success("Inmueble dado de alta. Abre su ficha y usa «Obtener fotos desde anuncio» para elegir las imágenes.")
+                st.rerun()
+            else:
+                st.error("Error al guardar. ¿GITHUB_TOKEN configurado?")
+
+    inmuebles = ghd.get_inmuebles(usuario_id)
+    if inmuebles:
+        st.markdown("---")
+        st.subheader("Inmuebles dados de alta")
+        for inv in inmuebles:
+            titulo = f"{inv.get('localizacion', 'Sin ubicación')} — {inv.get('importe', 0):,.0f} €"
+            with st.expander(titulo):
+                fotos_urls = ghd.get_fotos_inmueble_urls(usuario_id, inv.get("id"))
+                if fotos_urls:
+                    try:
+                        st.image(fotos_urls[0], caption="Foto del anuncio", use_container_width=True)
+                    except Exception:
+                        pass
+                st.caption(f"ID: {inv.get('id')} · m² útiles: {inv.get('m2_utiles')} · Año: {inv.get('ano_construccion')}")
+                if inv.get("inmobiliaria"):
+                    coste = _coste_total_inmueble(inv)
+                    st.caption(f"Coste total (con comisión {inv.get('comision_venta_pct', 0)}%): {coste:,.0f} €")
+                if inv.get("url_anuncio"):
+                    st.markdown(f"[Ver anuncio]({inv['url_anuncio']})")
+                # Obtener fotos desde URL y que el usuario elija cuáles añadir
+                inv_id = inv.get("id")
+                if inv.get("url_anuncio"):
+                    if "idealista" in (inv.get("url_anuncio") or "").lower():
+                        st.caption("Idealista suele bloquear peticiones directas (403). Configura **APIFY_TOKEN** o **ZENROWS_API_KEY** en secrets (ver `docs/IDEALISTA_SCRAPING.md`).")
+                    if st.button("🖼 Obtener fotos desde anuncio", key=f"btn_obt_fotos_{inv_id}"):
+                        try:
+                            with st.spinner("Extrayendo imágenes del anuncio…"):
+                                urls = extraer_urls_imagenes_anuncio(inv["url_anuncio"])
+                            if urls:
+                                st.session_state.fotos_extraidas = {"inmueble_id": inv_id, "urls": urls}
+                            else:
+                                st.warning("No se encontraron imágenes en el anuncio o el portal no permite extraerlas.")
+                        except ValueError as e:
+                            st.error(str(e))
+                        st.rerun()
+                fotos_extraidas = st.session_state.get("fotos_extraidas")
+                if fotos_extraidas and fotos_extraidas.get("inmueble_id") == inv_id and fotos_extraidas.get("urls"):
+                    urls_list = fotos_extraidas["urls"]
+                    st.markdown("**Selecciona las fotos a añadir a la ficha:**")
+                    # Grid de imágenes con checkbox cada una (máx 20 para no saturar)
+                    urls_show = urls_list[:20]
+                    cols = 4
+                    seleccionados = []
+                    for i, url in enumerate(urls_show):
+                        col_ix = i % cols
+                        if col_ix == 0:
+                            row = st.columns(cols)
+                        with row[col_ix]:
+                            try:
+                                st.image(url, use_column_width=True)
+                            except Exception:
+                                st.caption(f"Imagen {i+1}")
+                            if st.checkbox("Añadir", key=f"foto_sel_{inv_id}_{i}"):
+                                seleccionados.append((i, url))
+                    if st.button("Añadir seleccionadas a la ficha", key=f"btn_add_fotos_{inv_id}"):
+                        if not seleccionados:
+                            st.warning("Marca al menos una foto para añadir.")
+                        else:
+                            existentes = len(ghd.get_fotos_inmueble_urls(usuario_id, inv_id))
+                            subidas = 0
+                            for idx, (_, url) in enumerate(seleccionados):
+                                b = _descargar_imagen_bytes(url)
+                                if b:
+                                    ghd.subir_foto_inmueble(usuario_id, inv_id, b, existentes + idx + 1)
+                                    subidas += 1
+                            st.session_state.fotos_extraidas = None
+                            st.success(f"Se han añadido {subidas} foto(s) a la ficha.")
+                            st.rerun()
+                    if st.button("Cancelar", key=f"btn_cancel_fotos_{inv_id}"):
+                        st.session_state.fotos_extraidas = None
+                        st.rerun()
+                _editor_inmueble(usuario_id, inv)
+    else:
+        st.info("No hay inmuebles. Usa el formulario de arriba para dar de alta una vivienda.")
+
+
 def comparador(usuario_id: int):
     """Pestaña comparador: selección de hipotecas, indicación ventajosa, amortización y tabla."""
+    inv_sel = st.session_state.get("inmueble_seleccionado")
+    if inv_sel and isinstance(inv_sel, dict):
+        coste = _coste_total_inmueble(inv_sel)
+        st.info(f"**Vivienda seleccionada** (sidebar): {inv_sel.get('localizacion', '')} — Coste total compra: **{coste:,.0f} €** · Financiación sugerida (80%): **{coste * 0.8:,.0f} €**")
     hipotecas = ghd.get_hipotecas(usuario_id)
     st.session_state.hipotecas_cache = hipotecas
     if not hipotecas:
@@ -1136,9 +1491,31 @@ def main():
     st.sidebar.success(f"Sesión: **{u.get('nombre', '')}**")
     if st.sidebar.button("Cerrar sesión"):
         st.session_state.usuario_actual = None
+        st.session_state.inmueble_seleccionado = None
         st.rerun()
 
-    tab1, tab2, tab3 = st.tabs(["Alta de hipotecas", "Comparador", "Info"])
+    # Selector de inmueble para simular hipoteca
+    inmuebles = ghd.get_inmuebles(u["id"])
+    opts_inv = ["— Ninguno —"] + [f"{inv.get('localizacion', '')} — {inv.get('importe', 0):,.0f} €" for inv in inmuebles]
+    sel_inv = st.sidebar.selectbox(
+        "Inmueble para simular hipoteca",
+        opts_inv,
+        key="sel_inmueble",
+    )
+    if sel_inv == "— Ninguno —":
+        st.session_state.inmueble_seleccionado = None
+    else:
+        idx_inv = opts_inv.index(sel_inv) - 1
+        if 0 <= idx_inv < len(inmuebles):
+            st.session_state.inmueble_seleccionado = inmuebles[idx_inv]
+        else:
+            st.session_state.inmueble_seleccionado = None
+    if st.session_state.inmueble_seleccionado:
+        inv = st.session_state.inmueble_seleccionado
+        coste = _coste_total_inmueble(inv)
+        st.sidebar.caption(f"Coste total compra: **{coste:,.0f} €** · 80% ≈ **{coste * 0.8:,.0f} €** a financiar")
+
+    tab1, tab2, tab3, tab4 = st.tabs(["Alta de hipotecas", "Comparador", "Agenda inmuebles", "Info"])
     with tab1:
         formulario_hipoteca(u["id"])
         st.markdown("---")
@@ -1160,6 +1537,9 @@ def main():
         comparador(u["id"])
 
     with tab3:
+        agenda_inmuebles(u["id"])
+
+    with tab4:
         st.markdown("""
         **Hipochorro** guarda usuarios e hipotecas en el repositorio GitHub **jarconett/hipochorro**.
         - En **Streamlit Cloud** configura el secret `GITHUB_TOKEN` con un token de acceso al repo (con permisos de escritura).
