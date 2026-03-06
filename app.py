@@ -393,6 +393,7 @@ def formulario_hipoteca(usuario_id: int):
         mantenimiento = st.number_input("Mantenimiento cuenta (€/año)", min_value=0.0, value=0.0, step=10.0)
         mantenimiento_tarjeta = st.number_input("Mantenimiento tarjeta (€/año)", min_value=0.0, value=0.0, step=10.0)
         tasacion = st.number_input("Tasación (€)", min_value=0.0, value=0.0, step=50.0)
+        bonificacion_firma = st.number_input("Importe bonificado en la firma (€)", min_value=0.0, value=0.0, step=100.0, help="El banco lo abona una sola vez en la firma; reduce el coste total.")
         bonif_nomina_eur = st.number_input("Bonificación nómina (descuento €/año)", min_value=0.0, value=0.0, step=50.0)
         bonif_tin_nomina_pp = st.number_input("Bonif. TIN por nómina (p.p.)", min_value=0.0, value=0.0, step=0.05, format="%.2f")
         anos_bonif_nomina = st.number_input("Años bonif. nómina (0 = todo el préstamo)", min_value=0, max_value=40, value=0, step=1)
@@ -446,6 +447,7 @@ def formulario_hipoteca(usuario_id: int):
                 "mantenimiento": float(mantenimiento),
                 "mantenimiento_tarjeta": float(mantenimiento_tarjeta),
                 "tasacion": float(tasacion),
+                "bonificacion_firma": float(bonificacion_firma),
                 "bonif_nomina_eur": float(bonif_nomina_eur),
                 "seguro_hogar": float(seguro_hogar),
                 "seguro_vida": float(seguro_vida),
@@ -562,6 +564,7 @@ def _editor_hipoteca(usuario_id: int, h: dict):
         mantenimiento = st.number_input("Mantenimiento cuenta (€/año)", min_value=0.0, value=float(h.get("mantenimiento", 0) or 0), step=10.0, key=f"e_man_{hid}")
         mantenimiento_tarjeta = st.number_input("Mantenimiento tarjeta (€/año)", min_value=0.0, value=float(h.get("mantenimiento_tarjeta", 0) or 0), step=10.0, key=f"e_man_tar_{hid}")
         tasacion = st.number_input("Tasación (€)", min_value=0.0, value=float(h.get("tasacion", 0) or 0), step=50.0, key=f"e_tas_{hid}")
+        bonificacion_firma = st.number_input("Importe bonificado en la firma (€)", min_value=0.0, value=float(h.get("bonificacion_firma", 0) or 0), step=100.0, key=f"e_bonif_firma_{hid}", help="El banco lo abona una sola vez en la firma; reduce el coste total.")
         bonif_nomina_eur = st.number_input("Bonificación nómina (descuento €/año)", min_value=0.0, value=float(h.get("bonif_nomina_eur", h.get("bonif_nomina", 0) or 0)), step=50.0, key=f"e_bon_{hid}")
         bonif_tin_nomina_pp = st.number_input("Bonif. TIN por nómina (p.p.)", min_value=0.0, value=float(h.get("bonif_tin_nomina_pp", 0) or 0), step=0.05, format="%.2f", key=f"e_bon_tin_nom_{hid}")
         anos_bonif_nomina = st.number_input("Años bonif. nómina (0 = todo)", min_value=0, max_value=40, value=int(h.get("años_bonif_nomina", 0) or 0), step=1, key=f"e_ab_nom_{hid}")
@@ -618,6 +621,7 @@ def _editor_hipoteca(usuario_id: int, h: dict):
             "mantenimiento": float(mantenimiento),
             "mantenimiento_tarjeta": float(mantenimiento_tarjeta),
             "tasacion": float(tasacion),
+            "bonificacion_firma": float(bonificacion_firma),
             "bonif_nomina_eur": float(bonif_nomina_eur),
             "seguro_hogar": float(seguro_hogar),
             "seguro_vida": float(seguro_vida),
@@ -904,7 +908,8 @@ def coste_total_primero_ano(h: dict) -> float:
         am = cuota - im
         intereses += im
         cap -= am
-    return intereses + coste_anual_vinculados(h) + h.get("tasacion", 0)
+    bonif_firma = float(h.get("bonificacion_firma", 0) or 0)
+    return intereses + coste_anual_vinculados(h) + float(h.get("tasacion", 0) or 0) - bonif_firma
 
 
 def _duracion_str(meses: int) -> str:
@@ -983,7 +988,8 @@ def _resumen_costes_hipoteca(
     )
     coste_anual = _coste_anual_vinculados_año(h, 1, precios_externos, usar_externos)
 
-    coste_total = intereses_totales + vinculados_totales + float(h.get("tasacion", 0) or 0) + comisiones_por_extra
+    bonificacion_firma = float(h.get("bonificacion_firma", 0) or 0)
+    coste_total = intereses_totales + vinculados_totales + float(h.get("tasacion", 0) or 0) + comisiones_por_extra - bonificacion_firma
 
     return {
         "tae": tae,
@@ -999,6 +1005,7 @@ def _resumen_costes_hipoteca(
         "pagado_extra": float(pagado_extra),
         "comisiones_por_extra": float(comisiones_por_extra),
         "vinculados_totales": float(vinculados_totales),
+        "bonificacion_firma": float(bonificacion_firma),
         "coste_total": float(coste_total),
         "cuadro": cuadro,
     }
@@ -1350,6 +1357,7 @@ def comparador(usuario_id: int):
             "Intereses totales (€)": round(r.get("intereses_totales", 0), 2),
             "Vinculados/año usados (€)": round(r.get("coste_anual_vinculados", 0), 2),
             "Vinculados totales (€)": round(r.get("vinculados_totales", 0), 2),
+            "Bonif. firma (€)": round(r.get("bonificacion_firma", 0), 2),
             "Comisiones extra (€)": round(r.get("comisiones_por_extra", 0), 2),
             "Duración": _duracion_str(int(r.get("meses_hasta_fin", 0))),
             "Coste total (€)": round(r.get("coste_total", 0), 2),
@@ -1605,6 +1613,8 @@ def main():
             st.caption(f"Notaría ({NOTARIA_PCT_DEL_ITP}% ITP): {d['notaria']:,.0f} €")
             st.caption(f"Registro ({REGISTRO_PCT_DEL_ITP}% ITP): {d['registro']:,.0f} €")
             st.caption(f"Gestoría: {d['gestoria']:,.0f} €")
+            st.caption("---")
+            st.caption(f"**Total gastos compra: {d['total']:,.0f} €**")
 
     tab1, tab2, tab3, tab4 = st.tabs(["Alta de hipotecas", "Comparador", "Agenda inmuebles", "Info"])
     with tab1:
