@@ -2,6 +2,14 @@
 Hipochorro: simulador y comparador de hipotecas en España.
 Streamlit Cloud + datos en GitHub (jarconett/hipochorro).
 """
+import sys
+from pathlib import Path
+
+# Asegurar que el directorio raíz del proyecto está en el path (Streamlit Cloud, etc.)
+_root = Path(__file__).resolve().parent
+if str(_root) not in sys.path:
+    sys.path.insert(0, str(_root))
+
 import streamlit as st
 import pandas as pd
 import requests
@@ -10,10 +18,45 @@ from io import BytesIO
 from lib import github_data as ghd
 from lib import amortizacion as am
 
-# Configuración de página
+try:
+    from PIL import Image
+except Exception:  # pragma: no cover
+    Image = None
+
+ASSETS_DIR = Path(__file__).parent / "assets"
+LOGO_APP_PATH = ASSETS_DIR / "logo.png"
+FAVICON_PATH = ASSETS_DIR / "favicon.png"
+
+# Textos de ayuda para TIN y TAE (tooltips)
+HELP_TIN = (
+    "TIN (Tipo de Interés Nominal): porcentaje que cobra el banco por el dinero prestado, "
+    "sin incluir comisiones ni otros gastos. Es la base para calcular la cuota mensual. "
+    "Ejemplo: 150.000 € a 25 años con TIN 3,5% dan una cuota mensual de unos 750 € y unos 5.200 € de intereses el primer año."
+)
+HELP_TAE = (
+    "TAE (Tasa Anual Equivalente): porcentaje que refleja el coste total del préstamo al año, "
+    "incluyendo interés (TIN), comisiones de apertura y otros gastos obligatorios. Sirve para comparar ofertas entre bancos. "
+    "Ejemplo: TIN 3,5% con TAE 3,8% indica que las comisiones y gastos elevan el coste real al equivalente de 3,8% anual."
+)
+
+
+def _cargar_imagen(path: Path):
+    if Image is None:
+        return None
+    try:
+        if path.exists():
+            return Image.open(path)
+    except Exception:
+        return None
+    return None
+
+
+_favicon_img = _cargar_imagen(FAVICON_PATH)
+
+# Configuración de página (favicon)
 st.set_page_config(
     page_title="Hipochorro - Simulador de Hipotecas",
-    page_icon="🏠",
+    page_icon=_favicon_img if _favicon_img is not None else "🏠",
     layout="wide",
     initial_sidebar_state="expanded",
 )
@@ -61,8 +104,10 @@ def formulario_hipoteca(usuario_id: int):
         if valor_inmueble > 0:
             pct_financiacion = round(100 * cantidad_solicitada / valor_inmueble, 1)
             st.caption(f"Porcentaje de financiación: {pct_financiacion}%")
-        tin = st.number_input("% TIN *", min_value=0.0, max_value=30.0, value=3.5, step=0.05, format="%.2f")
-        tae = st.number_input("% TAE *", min_value=0.0, max_value=30.0, value=3.8, step=0.05, format="%.2f")
+        st.markdown('<span title="' + HELP_TIN.replace('"', '&quot;') + '">**TIN**</span> (pasa el ratón para ver el concepto)', unsafe_allow_html=True)
+        tin = st.number_input("% TIN *", min_value=0.0, max_value=30.0, value=3.5, step=0.05, format="%.2f", help=HELP_TIN)
+        st.markdown('<span title="' + HELP_TAE.replace('"', '&quot;') + '">**TAE**</span> (pasa el ratón para ver el concepto)', unsafe_allow_html=True)
+        tae = st.number_input("% TAE *", min_value=0.0, max_value=30.0, value=3.8, step=0.05, format="%.2f", help=HELP_TAE)
         st.markdown("---")
         st.caption("Comisiones y productos vinculados")
         comision_amort_parcial = st.number_input("Comisión amortización parcial (%)", min_value=0.0, value=0.0, step=0.1, format="%.2f")
@@ -120,6 +165,161 @@ def formulario_hipoteca(usuario_id: int):
             st.warning("Rellena al menos nombre de entidad y nombre de hipoteca.")
 
 
+def _borrar_hipoteca(usuario_id: int, hipoteca_id: int) -> bool:
+    hipotecas = ghd.get_hipotecas(usuario_id)
+    nuevas = [h for h in hipotecas if h.get("id") != hipoteca_id]
+    if len(nuevas) == len(hipotecas):
+        return False
+    return ghd.guardar_hipotecas(usuario_id, nuevas)
+
+
+def _editor_hipoteca(usuario_id: int, h: dict):
+    hid = h.get("id")
+    st.markdown("#### Editar / borrar")
+
+    # Logo: permitir actualizar por dominio o subida manual
+    col_logo1, col_logo2 = st.columns([2, 1])
+    with col_logo1:
+        dominio_logo = st.text_input(
+            "Dominio web para actualizar logo (opcional)",
+            value="",
+            placeholder="Ej: bbva.com, santander.es",
+            key=f"edit_dom_{hid}",
+        )
+    with col_logo2:
+        logo_subir = st.file_uploader(
+            "Actualizar logo (PNG/JPG)",
+            type=["png", "jpg", "jpeg"],
+            key=f"edit_logo_{hid}",
+        )
+
+    with st.form(f"form_edit_{hid}"):
+        nombre_entidad = st.text_input("Nombre entidad *", value=h.get("nombre_entidad", ""), key=f"e_ent_{hid}")
+        nombre_hipoteca = st.text_input("Nombre de la hipoteca *", value=h.get("nombre_hipoteca", ""), key=f"e_nom_{hid}")
+        duracion_anos = st.number_input("Duración del préstamo (años) *", min_value=1, max_value=40, value=int(h.get("duracion_anos", 25) or 25), key=f"e_dur_{hid}")
+        cantidad_solicitada = st.number_input("Cantidad solicitada (€) *", min_value=0.0, value=float(h.get("cantidad_solicitada", 0) or 0), step=5000.0, key=f"e_cap_{hid}")
+        valor_inmueble = st.number_input("Valor del inmueble (€)", min_value=0.0, value=float(h.get("valor_inmueble", cantidad_solicitada) or 0), step=5000.0, key=f"e_val_{hid}")
+        if valor_inmueble > 0:
+            pct_financiacion = round(100 * cantidad_solicitada / valor_inmueble, 1)
+            st.caption(f"Porcentaje de financiación: {pct_financiacion}%")
+
+        st.markdown('<span title="' + HELP_TIN.replace('"', '&quot;') + '">**TIN**</span> (pasa el ratón para ver el concepto)', unsafe_allow_html=True)
+        tin = st.number_input("% TIN *", min_value=0.0, max_value=30.0, value=float(h.get("tin", 0) or 0), step=0.05, format="%.2f", help=HELP_TIN, key=f"e_tin_{hid}")
+        st.markdown('<span title="' + HELP_TAE.replace('"', '&quot;') + '">**TAE**</span> (pasa el ratón para ver el concepto)', unsafe_allow_html=True)
+        tae = st.number_input("% TAE *", min_value=0.0, max_value=30.0, value=float(h.get("tae", 0) or 0), step=0.05, format="%.2f", help=HELP_TAE, key=f"e_tae_{hid}")
+
+        st.markdown("---")
+        st.caption("Comisiones y productos vinculados")
+        comision_amort_parcial = st.number_input("Comisión amortización parcial (%)", min_value=0.0, value=float(h.get("comision_amort_parcial", 0) or 0), step=0.1, format="%.2f", key=f"e_com_{hid}")
+        mantenimiento = st.number_input("Mantenimiento (€/año)", min_value=0.0, value=float(h.get("mantenimiento", 0) or 0), step=10.0, key=f"e_man_{hid}")
+        tasacion = st.number_input("Tasación (€)", min_value=0.0, value=float(h.get("tasacion", 0) or 0), step=50.0, key=f"e_tas_{hid}")
+        bonif_nomina = st.number_input("Bonificación nómina (€/año)", min_value=0.0, value=float(h.get("bonif_nomina", 0) or 0), step=50.0, key=f"e_bon_{hid}")
+        seguro_hogar = st.number_input("Seguro hogar (€/año)", min_value=0.0, value=float(h.get("seguro_hogar", 0) or 0), step=20.0, key=f"e_sh_{hid}")
+        seguro_vida = st.number_input("Seguro vida (€/año)", min_value=0.0, value=float(h.get("seguro_vida", 0) or 0), step=20.0, key=f"e_sv_{hid}")
+        alarma = st.number_input("Alarma (€/año)", min_value=0.0, value=float(h.get("alarma", 0) or 0), step=20.0, key=f"e_ala_{hid}")
+        proteccion_pagos = st.number_input("Protección de pagos (€/año)", min_value=0.0, value=float(h.get("proteccion_pagos", 0) or 0), step=20.0, key=f"e_pp_{hid}")
+        pension = st.number_input("Pensión (€/año)", min_value=0.0, value=float(h.get("pension", 0) or 0), step=20.0, key=f"e_pen_{hid}")
+        bizum = st.checkbox("Bizum vinculado", value=bool(h.get("bizum", False)), key=f"e_biz_{hid}")
+        tarjeta_credito = st.checkbox("Tarjeta de crédito vinculada", value=bool(h.get("tarjeta_credito", False)), key=f"e_tar_{hid}")
+
+        guardar = st.form_submit_button("Guardar cambios")
+
+    if guardar:
+        logo_path = h.get("logo_path")
+        if dominio_logo:
+            img_bytes = intentar_logo_desde_dominio(dominio_logo)
+            if img_bytes:
+                logo_path = ghd.subir_logo_desde_bytes(nombre_entidad, img_bytes)
+            else:
+                st.warning("No se pudo descargar el logo desde el dominio.")
+        if logo_subir is not None:
+            logo_path = ghd.subir_logo_desde_bytes(nombre_entidad, logo_subir.getvalue())
+
+        actualizado = {
+            **h,
+            "nombre_entidad": nombre_entidad,
+            "logo_path": logo_path,
+            "nombre_hipoteca": nombre_hipoteca,
+            "duracion_anos": int(duracion_anos),
+            "cantidad_solicitada": float(cantidad_solicitada),
+            "valor_inmueble": float(valor_inmueble),
+            "pct_financiacion": round(100 * cantidad_solicitada / valor_inmueble, 1) if valor_inmueble else 0,
+            "tin": float(tin),
+            "tae": float(tae),
+            "comision_amort_parcial": float(comision_amort_parcial),
+            "mantenimiento": float(mantenimiento),
+            "tasacion": float(tasacion),
+            "bonif_nomina": float(bonif_nomina),
+            "seguro_hogar": float(seguro_hogar),
+            "seguro_vida": float(seguro_vida),
+            "alarma": float(alarma),
+            "proteccion_pagos": float(proteccion_pagos),
+            "pension": float(pension),
+            "bizum": bool(bizum),
+            "tarjeta_credito": bool(tarjeta_credito),
+        }
+        if ghd.actualizar_hipoteca(usuario_id, actualizado):
+            st.success("Cambios guardados.")
+            st.rerun()
+        else:
+            st.error("No se pudieron guardar cambios (¿GITHUB_TOKEN configurado?).")
+
+    st.markdown("---")
+    st.markdown("#### Duplicar hipoteca")
+    st.caption("Crea una copia para probar variantes (por ejemplo cambiando TIN/TAE) sin reescribirla a mano.")
+    col_dup1, col_dup2, col_dup3 = st.columns([2, 1, 1])
+    with col_dup1:
+        nombre_copia = st.text_input(
+            "Nombre para la copia",
+            value=f"{h.get('nombre_hipoteca', '')} (copia)",
+            key=f"dup_name_{hid}",
+        )
+    with col_dup2:
+        tin_copia = st.number_input(
+            "% TIN (opcional)",
+            min_value=0.0,
+            max_value=30.0,
+            value=float(h.get("tin", 0) or 0),
+            step=0.05,
+            format="%.2f",
+            help=HELP_TIN,
+            key=f"dup_tin_{hid}",
+        )
+    with col_dup3:
+        tae_copia = st.number_input(
+            "% TAE (opcional)",
+            min_value=0.0,
+            max_value=30.0,
+            value=float(h.get("tae", 0) or 0),
+            step=0.05,
+            format="%.2f",
+            help=HELP_TAE,
+            key=f"dup_tae_{hid}",
+        )
+
+    if st.button("Duplicar ahora", key=f"dup_btn_{hid}", use_container_width=True):
+        copia = {k: v for k, v in h.items() if k != "id"}
+        copia["nombre_hipoteca"] = nombre_copia.strip() or f"{h.get('nombre_hipoteca','')} (copia)"
+        copia["tin"] = float(tin_copia)
+        copia["tae"] = float(tae_copia)
+        out = ghd.añadir_hipoteca(usuario_id, copia)
+        if out:
+            st.success("Hipoteca duplicada.")
+            st.rerun()
+        else:
+            st.error("No se pudo duplicar (¿GITHUB_TOKEN configurado?).")
+
+    st.markdown("---")
+    st.markdown("#### Borrar hipoteca")
+    confirmar = st.checkbox("Confirmo que quiero borrar esta hipoteca", key=f"del_ok_{hid}")
+    if st.button("Eliminar definitivamente", key=f"del_btn_{hid}", disabled=not confirmar):
+        if _borrar_hipoteca(usuario_id, hid):
+            st.success("Hipoteca eliminada.")
+            st.rerun()
+        else:
+            st.error("No se pudo eliminar.")
+
+
 def coste_anual_vinculados(h: dict) -> float:
     """Coste anual en productos vinculados (mantenimiento, seguros, etc.)."""
     return (
@@ -135,8 +335,6 @@ def coste_total_primero_ano(h: dict) -> float:
     n = h.get("duracion_anos", 25) * 12
     tin = h.get("tin", 0)
     cuota = cuota_mensual_frances(c, tin, n)
-    # Intereses primer año aprox
-    intereses_ano1 = 12 * cuota - (c / (n / 12))  # aproximación
     # Mejor: primer año intereses reales
     i_mensual = tin / 100 / 12
     cap = c
@@ -147,6 +345,50 @@ def coste_total_primero_ano(h: dict) -> float:
         intereses += im
         cap -= am
     return intereses + coste_anual_vinculados(h) + h.get("tasacion", 0)
+
+
+def _resumen_costes_hipoteca(h: dict, amort_anual: float) -> dict:
+    """
+    Calcula métricas útiles para ranking:
+    - cuota_inicial
+    - intereses_totales
+    - años_hasta_fin
+    - pagado_en_cuotas
+    - pagado_extra
+    - comisiones_por_extra
+    - vinculados_totales
+    - coste_total (intereses + vinculados + tasación + comisiones)
+    """
+    capital = float(h.get("cantidad_solicitada", 0) or 0)
+    anos = int(h.get("duracion_anos", 0) or 0)
+    tin = float(h.get("tin", 0) or 0)
+    tae = float(h.get("tae", 0) or 0)
+    comision_pct = float(h.get("comision_amort_parcial", 0) or 0)
+
+    cuota_inicial = am.cuota_mensual_frances(capital, tin, max(anos, 1) * 12) if capital > 0 and anos > 0 else 0.0
+    cuadro = am.cuadro_amortizacion_anual(capital, tin, anos, float(amort_anual or 0))
+
+    intereses_totales = sum(r.get("intereses_año", 0) for r in cuadro)
+    años_hasta_fin = len(cuadro)
+    pagado_en_cuotas = sum((r.get("cuota_mensual", 0) * r.get("meses_pagados", 0)) for r in cuadro)
+    pagado_extra = sum(r.get("extra_año", 0) for r in cuadro)
+    comisiones_por_extra = (comision_pct / 100.0) * pagado_extra
+    vinculados_totales = años_hasta_fin * coste_anual_vinculados(h)
+
+    coste_total = intereses_totales + vinculados_totales + float(h.get("tasacion", 0) or 0) + comisiones_por_extra
+
+    return {
+        "tae": tae,
+        "cuota_inicial": float(cuota_inicial),
+        "intereses_totales": float(intereses_totales),
+        "años_hasta_fin": int(años_hasta_fin),
+        "pagado_en_cuotas": float(pagado_en_cuotas),
+        "pagado_extra": float(pagado_extra),
+        "comisiones_por_extra": float(comisiones_por_extra),
+        "vinculados_totales": float(vinculados_totales),
+        "coste_total": float(coste_total),
+        "cuadro": cuadro,
+    }
 
 
 def comparador(usuario_id: int):
@@ -175,15 +417,77 @@ def comparador(usuario_id: int):
         key="amort_anual_comp",
     )
 
-    # Métricas para “más ventajosa”: TAE, coste primer año, vinculados
-    def puntuacion(h):
-        tae = h.get("tae", 999)
-        c1 = coste_total_primero_ano(h)
-        vinc = coste_anual_vinculados(h)
-        return (-tae * 10 - c1 * 0.01 - vinc * 0.01)
+    st.markdown("### Criterio de comparación")
+    criterio = st.selectbox(
+        "¿Qué significa “más ventajosa”?",
+        [
+            "Coste total (intereses + vinculados + tasación + comisiones por amortización extra)",
+            "TAE (menor es mejor)",
+            "Cuota mensual inicial (menor es mejor)",
+            "Coste primer año (intereses reales año 1 + vinculados + tasación)",
+        ],
+        key="criterio_comp",
+    )
 
-    elegidas_orden = sorted(elegidas, key=puntuacion, reverse=True)
+    resumenes = {}
+    for h in elegidas:
+        resumenes[h.get("id")] = _resumen_costes_hipoteca(h, amort_anual)
+
+    def clave_orden(h: dict):
+        rid = h.get("id")
+        r = resumenes.get(rid, {})
+        if criterio.startswith("TAE"):
+            return r.get("tae", 9999)
+        if criterio.startswith("Cuota"):
+            return r.get("cuota_inicial", 9e18)
+        if criterio.startswith("Coste primer año"):
+            return coste_total_primero_ano(h)
+        return r.get("coste_total", 9e18)
+
+    elegidas_orden = sorted(elegidas, key=clave_orden)
     mejor = elegidas_orden[0] if elegidas_orden else None
+
+    st.markdown("### Ranking")
+    ranking_rows = []
+    for h in elegidas_orden:
+        r = resumenes.get(h.get("id"), {})
+        ranking_rows.append({
+            "Entidad": h.get("nombre_entidad", ""),
+            "Hipoteca": h.get("nombre_hipoteca", ""),
+            "TAE (%)": float(h.get("tae", 0) or 0),
+            "TIN (%)": float(h.get("tin", 0) or 0),
+            "Cuota inicial (€)": round(r.get("cuota_inicial", 0), 2),
+            "Intereses totales (€)": round(r.get("intereses_totales", 0), 2),
+            "Vinculados totales (€)": round(r.get("vinculados_totales", 0), 2),
+            "Comisiones extra (€)": round(r.get("comisiones_por_extra", 0), 2),
+            "Años hasta fin": int(r.get("años_hasta_fin", 0)),
+            "Coste total (€)": round(r.get("coste_total", 0), 2),
+        })
+    df_ranking = pd.DataFrame(ranking_rows)
+    st.dataframe(df_ranking, use_container_width=True, hide_index=True)
+
+    st.markdown("#### Exportar ranking")
+    ranking_csv = df_ranking.to_csv(index=False).encode("utf-8")
+    st.download_button(
+        "Descargar ranking (CSV)",
+        data=ranking_csv,
+        file_name="ranking_hipotecas.csv",
+        mime="text/csv",
+        use_container_width=True,
+    )
+    try:
+        bio_rank = BytesIO()
+        with pd.ExcelWriter(bio_rank, engine="openpyxl") as writer:
+            df_ranking.to_excel(writer, index=False, sheet_name="Ranking")
+        st.download_button(
+            "Descargar ranking (Excel)",
+            data=bio_rank.getvalue(),
+            file_name="ranking_hipotecas.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            use_container_width=True,
+        )
+    except Exception:
+        st.caption("No se pudo generar Excel del ranking (falta `openpyxl` o no está disponible en el entorno).")
 
     # Columnas para comparación visual
     n = len(elegidas)
@@ -208,6 +512,8 @@ def comparador(usuario_id: int):
             st.metric("TIN", f"{h.get('tin', 0):.2f}%")
             st.metric("Cuota aprox. (€)", f"{am.cuota_mensual_frances(h.get('cantidad_solicitada',0), h.get('tin',0), h.get('duracion_anos',25)*12):,.0f}")
             st.caption(f"Coste vinculados/año: {coste_anual_vinculados(h):,.0f} €")
+            r = resumenes.get(h.get("id"), {})
+            st.caption(f"Coste total (según criterio): {r.get('coste_total', 0):,.0f} €")
 
     # Tabla de cuotas por año (amortización francesa) para la primera selección o selector
     st.markdown("---")
@@ -226,19 +532,49 @@ def comparador(usuario_id: int):
     c = hipo_tabla.get("cantidad_solicitada", 0)
     anos = hipo_tabla.get("duracion_anos", 25)
     tin = hipo_tabla.get("tin", 0)
-    cuadro = am.cuadro_amortizacion_anual(c, tin, anos, amort_anual)
+    rid = hipo_tabla.get("id")
+    cuadro = resumenes.get(rid, {}).get("cuadro") if rid in resumenes else am.cuadro_amortizacion_anual(c, tin, anos, amort_anual)
     df = pd.DataFrame(cuadro)
     df = df.rename(columns={
         "año": "Año",
         "cuota_mensual": "Cuota mensual (€)",
+        "meses_pagados": "Meses pagados",
         "intereses_año": "Intereses año (€)",
         "amortizado_año": "Amortizado año (€)",
+        "extra_año": "Amortización extra (€)",
         "deuda_restante": "Deuda restante (€)",
     })
     st.dataframe(df, use_container_width=True, hide_index=True)
 
+    st.markdown("### Exportar")
+    csv_bytes = df.to_csv(index=False).encode("utf-8")
+    st.download_button(
+        "Descargar CSV",
+        data=csv_bytes,
+        file_name="amortizacion.csv",
+        mime="text/csv",
+    )
+    try:
+        bio = BytesIO()
+        with pd.ExcelWriter(bio, engine="openpyxl") as writer:
+            df.to_excel(writer, index=False, sheet_name="Amortización")
+        st.download_button(
+            "Descargar Excel",
+            data=bio.getvalue(),
+            file_name="amortizacion.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        )
+    except Exception:
+        st.caption("No se pudo generar Excel (falta `openpyxl` o no está disponible en el entorno).")
+
 
 def main():
+    # Portada: logo + título
+    logo_img = _cargar_imagen(LOGO_APP_PATH)
+    if logo_img is not None:
+        c1, c2, c3 = st.columns([1, 2, 1])
+        with c2:
+            st.image(logo_img, use_container_width=True)
     st.title("Hipochorro")
     st.caption("Simulador y comparador de hipotecas en España — datos en GitHub")
 
@@ -300,7 +636,8 @@ def main():
                             st.image(ghd.get_logo_raw_url(logo_path), width=60)
                         except Exception:
                             pass
-                    st.json({k: v for k, v in h.items() if k != "id"})
+                    st.caption(f"ID: {h.get('id')}")
+                    _editor_hipoteca(u['id'], h)
 
     with tab2:
         comparador(u["id"])

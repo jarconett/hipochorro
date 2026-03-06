@@ -14,6 +14,7 @@ Simulador y comparador de hipotecas en España. Pensado para ejecutarse en **Str
    - Nombre hipoteca, duración, cantidad solicitada, % financiación, TIN, TAE.
    - Comisión amortización parcial, mantenimiento, tasación, bonificación nómina, seguros (hogar, vida), alarma, protección de pagos, pensión, Bizum, tarjeta de crédito.
 3. **Comparador**: Selección de varias hipotecas, indicación visual de la más ventajosa (TAE, coste primer año, vinculados), campo de amortización extraordinaria anual y cuadro de amortización por años con **sistema francés**.
+4. **Branding**: portada con logo y favicon desde `assets/`.
 
 ## Despliegue en Streamlit Cloud
 
@@ -37,6 +38,8 @@ Sin `GITHUB_TOKEN` la app arranca pero no podrá guardar usuarios ni hipotecas (
 
 ## Estructura de datos en el repo
 
+- `assets/logo.png`: logo de la app (portada).
+- `assets/favicon.png`: favicon de la app (icono de pestaña).
 - `data/usuarios.json`: lista de usuarios (id, nombre, email).
 - `data/hipotecas/usuario_{id}.json`: hipotecas por usuario.
 - `data/logos/{entidad_slug}.png`: logos de entidades.
