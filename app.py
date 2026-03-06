@@ -45,6 +45,12 @@ HELP_TAE = (
 # En Streamlit Cloud: Settings → Secrets → clave "APIFY_TOKEN_SECRET" con tu API token de apify.com
 APIFY_TOKEN_SECRET = "APIFY_TOKEN_SECRET"
 
+# Gastos de compra (sobre precio de la vivienda / ITP)
+ITP_PCT = 7.0           # Impuesto de Transmisiones Patrimoniales: % sobre precio vivienda
+NOTARIA_PCT_DEL_ITP = 10.0   # Notaría: % del importe del ITP
+REGISTRO_PCT_DEL_ITP = 10.0  # Registro: % del importe del ITP
+GESTORIA_EUR = 300.0    # Gestoría: importe fijo (€)
+
 
 def _cargar_imagen(path: Path):
     if Image is None:
@@ -274,13 +280,34 @@ def _descargar_imagen_bytes(url: str) -> bytes | None:
     return None
 
 
-def _coste_total_inmueble(inv: dict) -> float:
-    """Coste total de compra: importe + comisión si es inmobiliaria."""
-    imp = float(inv.get("importe", 0) or 0)
+def _desglose_gastos_compra(inv: dict) -> dict:
+    """
+    Desglose de gastos de compra: precio, comisión, ITP, notaría, registro, gestoría.
+    Notaría y registro son un % del importe del ITP.
+    """
+    precio = float(inv.get("importe", 0) or 0)
+    comision = 0.0
     if inv.get("inmobiliaria"):
-        com = float(inv.get("comision_venta_pct", 0) or 0) / 100.0
-        return imp * (1 + com)
-    return imp
+        comision = precio * (float(inv.get("comision_venta_pct", 0) or 0) / 100.0)
+    itp = precio * (ITP_PCT / 100.0)
+    notaria = itp * (NOTARIA_PCT_DEL_ITP / 100.0)
+    registro = itp * (REGISTRO_PCT_DEL_ITP / 100.0)
+    gestoria = GESTORIA_EUR
+    total = precio + comision + itp + notaria + registro + gestoria
+    return {
+        "precio": precio,
+        "comision": comision,
+        "itp": itp,
+        "notaria": notaria,
+        "registro": registro,
+        "gestoria": gestoria,
+        "total": total,
+    }
+
+
+def _coste_total_inmueble(inv: dict) -> float:
+    """Coste total de compra: importe + comisión inmobiliaria + ITP (7%) + notaría (10% ITP) + registro (10% ITP) + gestoría (300 €)."""
+    return _desglose_gastos_compra(inv)["total"]
 
 
 def formulario_hipoteca(usuario_id: int):
@@ -1041,9 +1068,8 @@ def agenda_inmuebles(usuario_id: int):
                     except Exception:
                         pass
                 st.caption(f"ID: {inv.get('id')} · m² útiles: {inv.get('m2_utiles')} · Año: {inv.get('ano_construccion')}")
-                if inv.get("inmobiliaria"):
-                    coste = _coste_total_inmueble(inv)
-                    st.caption(f"Coste total (con comisión {inv.get('comision_venta_pct', 0)}%): {coste:,.0f} €")
+                d = _desglose_gastos_compra(inv)
+                st.caption(f"Coste total compra: **{d['total']:,.0f} €** (precio + comisión + ITP {ITP_PCT}% + notaría + registro + gestoría {GESTORIA_EUR:.0f} €)")
                 if inv.get("url_anuncio"):
                     st.markdown(f"[Ver anuncio]({inv['url_anuncio']})")
                 # Obtener fotos desde URL y que el usuario elija cuáles añadir
@@ -1108,7 +1134,7 @@ def comparador(usuario_id: int):
     inv_sel = st.session_state.get("inmueble_seleccionado")
     if inv_sel and isinstance(inv_sel, dict):
         coste = _coste_total_inmueble(inv_sel)
-        st.info(f"**Vivienda seleccionada** (sidebar): {inv_sel.get('localizacion', '')} — Coste total compra: **{coste:,.0f} €** · Financiación sugerida (80%): **{coste * 0.8:,.0f} €**")
+        st.info(f"**Vivienda seleccionada** (sidebar): {inv_sel.get('localizacion', '')} — Coste total compra (con ITP, notaría, registro, gestoría): **{coste:,.0f} €** · Financiación sugerida (80%): **{coste * 0.8:,.0f} €**")
     hipotecas = ghd.get_hipotecas(usuario_id)
     st.session_state.hipotecas_cache = hipotecas
     if not hipotecas:
@@ -1512,8 +1538,17 @@ def main():
             st.session_state.inmueble_seleccionado = None
     if st.session_state.inmueble_seleccionado:
         inv = st.session_state.inmueble_seleccionado
-        coste = _coste_total_inmueble(inv)
+        d = _desglose_gastos_compra(inv)
+        coste = d["total"]
         st.sidebar.caption(f"Coste total compra: **{coste:,.0f} €** · 80% ≈ **{coste * 0.8:,.0f} €** a financiar")
+        with st.sidebar.expander("Desglose gastos compra"):
+            st.caption(f"Precio: {d['precio']:,.0f} €")
+            if d["comision"] > 0:
+                st.caption(f"Comisión: {d['comision']:,.0f} €")
+            st.caption(f"ITP ({ITP_PCT}%): {d['itp']:,.0f} €")
+            st.caption(f"Notaría ({NOTARIA_PCT_DEL_ITP}% ITP): {d['notaria']:,.0f} €")
+            st.caption(f"Registro ({REGISTRO_PCT_DEL_ITP}% ITP): {d['registro']:,.0f} €")
+            st.caption(f"Gestoría: {d['gestoria']:,.0f} €")
 
     tab1, tab2, tab3, tab4 = st.tabs(["Alta de hipotecas", "Comparador", "Agenda inmuebles", "Info"])
     with tab1:
