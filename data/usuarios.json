@@ -4,6 +4,11 @@
       "id": 1,
       "nombre": "Javier",
       "email": "fjdelasrivasramirez@gmail.com"
+    },
+    {
+      "id": 2,
+      "nombre": "Nieves",
+      "email": ""
     }
   ]
 }
