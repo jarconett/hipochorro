@@ -31,6 +31,38 @@
       "bonif_tin_tarjeta_pp": 0.0,
       "tin_base": 2.3,
       "id": 1
+    },
+    {
+      "nombre_entidad": "UNICAJA ",
+      "logo_path": null,
+      "nombre_hipoteca": "Fija25CB",
+      "duracion_anos": 25,
+      "cantidad_solicitada": 270000.0,
+      "valor_inmueble": 270000.0,
+      "pct_financiacion": 100.0,
+      "tin": 1.9,
+      "tae": 2.47,
+      "comision_amort_parcial": 1.0,
+      "mantenimiento": 120.0,
+      "mantenimiento_tarjeta": 48.35,
+      "tasacion": 496.88,
+      "bonif_nomina_eur": 0.0,
+      "seguro_hogar": 0.0,
+      "seguro_vida": 0.0,
+      "alarma": 0.0,
+      "proteccion_pagos": 0.0,
+      "pension": 0.0,
+      "bizum": false,
+      "tarjeta_credito": true,
+      "bonif_tin_seguro_hogar_pp": 0.5,
+      "bonif_tin_seguro_vida_pp": 0.1,
+      "bonif_tin_alarma_pp": 0.2,
+      "bonif_tin_proteccion_pagos_pp": 0.0,
+      "bonif_tin_pension_pp": 0.0,
+      "bonif_tin_bizum_pp": 0.0,
+      "bonif_tin_tarjeta_pp": 0.0,
+      "tin_base": 1.9,
+      "id": 2
     }
   ]
 }
