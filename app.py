@@ -340,8 +340,7 @@ def formulario_hipoteca(usuario_id: int):
     def_cantidad = 150000.0
     if inv_sel and isinstance(inv_sel, dict):
         def_valor = _coste_total_inmueble(inv_sel)
-        def_cantidad = round(def_valor * 0.8, 0)
-        st.caption(f"💡 Valores sugeridos por el inmueble seleccionado en el sidebar: {inv_sel.get('localizacion', '')} — coste total {def_valor:,.0f} €")
+        st.caption(f"💡 Valor del inmueble seleccionado en el sidebar: {inv_sel.get('localizacion', '')} — coste total {def_valor:,.0f} €")
     logo_subir = st.file_uploader("Logo: sube imagen (PNG/JPG) si no usas dominio", type=["png", "jpg", "jpeg"], key="logo_upload")
     with st.form("form_hipoteca"):
         nombre_entidad = st.text_input("Nombre entidad *", placeholder="Ej: BBVA, Santander, CaixaBank")
@@ -1197,7 +1196,7 @@ def comparador(usuario_id: int):
     inv_sel = st.session_state.get("inmueble_seleccionado")
     if inv_sel and isinstance(inv_sel, dict):
         coste = _coste_total_inmueble(inv_sel)
-        st.info(f"**Vivienda seleccionada** (sidebar): {inv_sel.get('localizacion', '')} — Coste total compra (con ITP, notaría, registro, gestoría): **{coste:,.0f} €** · Financiación sugerida (80%): **{coste * 0.8:,.0f} €**")
+        st.info(f"**Vivienda seleccionada** (sidebar): {inv_sel.get('localizacion', '')} — Coste total compra (con ITP, notaría, registro, gestoría): **{coste:,.0f} €**")
     hipotecas = ghd.get_hipotecas(usuario_id)
     st.session_state.hipotecas_cache = hipotecas
     if not hipotecas:
@@ -1604,7 +1603,7 @@ def main():
         inv = st.session_state.inmueble_seleccionado
         d = _desglose_gastos_compra(inv)
         coste = d["total"]
-        st.sidebar.caption(f"Coste total compra: **{coste:,.0f} €** · 80% ≈ **{coste * 0.8:,.0f} €** a financiar")
+        st.sidebar.caption(f"Coste total compra: **{coste:,.0f} €**")
         with st.sidebar.expander("Desglose gastos compra"):
             st.caption(f"Precio: {d['precio']:,.0f} €")
             if d["comision"] > 0:
