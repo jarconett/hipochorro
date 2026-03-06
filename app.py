@@ -55,7 +55,7 @@ _favicon_img = _cargar_imagen(FAVICON_PATH)
 
 # Configuración de página (favicon)
 st.set_page_config(
-    page_title="Hipochorro - Simulador de Hipotecas",
+    page_title="Hipochorro - Comparador de Hipotecas",
     page_icon=_favicon_img if _favicon_img is not None else "🏠",
     layout="wide",
     initial_sidebar_state="expanded",
