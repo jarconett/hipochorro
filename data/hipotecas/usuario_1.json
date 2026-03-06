@@ -42,7 +42,8 @@
       "años_bonif_bizum": 0,
       "años_bonif_tarjeta": 0,
       "tin_base": 2.15,
-      "id": 2
+      "id": 2,
+      "bonificacion_firma": 860.0
     },
     {
       "nombre_entidad": "BBVA",
