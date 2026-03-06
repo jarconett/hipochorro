@@ -347,12 +347,22 @@ def coste_total_primero_ano(h: dict) -> float:
     return intereses + coste_anual_vinculados(h) + h.get("tasacion", 0)
 
 
-def _resumen_costes_hipoteca(h: dict, amort_anual: float) -> dict:
+def _duracion_str(meses: int) -> str:
+    meses = int(max(0, meses))
+    a = meses // 12
+    m = meses % 12
+    if m == 0:
+        return f"{a} años"
+    return f"{a} años {m} meses"
+
+
+def _resumen_costes_hipoteca(h: dict, amort_anual: float, modo_amortizacion: str) -> dict:
     """
     Calcula métricas útiles para ranking:
     - cuota_inicial
     - intereses_totales
     - años_hasta_fin
+    - meses_hasta_fin
     - pagado_en_cuotas
     - pagado_extra
     - comisiones_por_extra
@@ -366,14 +376,15 @@ def _resumen_costes_hipoteca(h: dict, amort_anual: float) -> dict:
     comision_pct = float(h.get("comision_amort_parcial", 0) or 0)
 
     cuota_inicial = am.cuota_mensual_frances(capital, tin, max(anos, 1) * 12) if capital > 0 and anos > 0 else 0.0
-    cuadro = am.cuadro_amortizacion_anual(capital, tin, anos, float(amort_anual or 0))
+    cuadro = am.cuadro_amortizacion_anual(capital, tin, anos, float(amort_anual or 0), modo=modo_amortizacion)
 
     intereses_totales = sum(r.get("intereses_año", 0) for r in cuadro)
-    años_hasta_fin = len(cuadro)
+    meses_hasta_fin = int(sum(r.get("meses_pagados", 0) for r in cuadro))
+    años_hasta_fin = (meses_hasta_fin / 12.0) if meses_hasta_fin else 0.0
     pagado_en_cuotas = sum((r.get("cuota_mensual", 0) * r.get("meses_pagados", 0)) for r in cuadro)
     pagado_extra = sum(r.get("extra_año", 0) for r in cuadro)
     comisiones_por_extra = (comision_pct / 100.0) * pagado_extra
-    vinculados_totales = años_hasta_fin * coste_anual_vinculados(h)
+    vinculados_totales = (meses_hasta_fin / 12.0) * coste_anual_vinculados(h) if meses_hasta_fin else 0.0
 
     coste_total = intereses_totales + vinculados_totales + float(h.get("tasacion", 0) or 0) + comisiones_por_extra
 
@@ -381,7 +392,8 @@ def _resumen_costes_hipoteca(h: dict, amort_anual: float) -> dict:
         "tae": tae,
         "cuota_inicial": float(cuota_inicial),
         "intereses_totales": float(intereses_totales),
-        "años_hasta_fin": int(años_hasta_fin),
+        "años_hasta_fin": float(años_hasta_fin),
+        "meses_hasta_fin": int(meses_hasta_fin),
         "pagado_en_cuotas": float(pagado_en_cuotas),
         "pagado_extra": float(pagado_extra),
         "comisiones_por_extra": float(comisiones_por_extra),
@@ -417,6 +429,16 @@ def comparador(usuario_id: int):
         key="amort_anual_comp",
     )
 
+    modo_amort = st.selectbox(
+        "Aplicar amortización extraordinaria para…",
+        [
+            "Reducir cuota (mantener plazo)",
+            "Reducir plazo (mantener cuota)",
+        ],
+        key="modo_amortizacion_comp",
+    )
+    modo_amortizacion = "reducir_cuota" if modo_amort.startswith("Reducir cuota") else "reducir_plazo"
+
     st.markdown("### Criterio de comparación")
     criterio = st.selectbox(
         "¿Qué significa “más ventajosa”?",
@@ -431,7 +453,7 @@ def comparador(usuario_id: int):
 
     resumenes = {}
     for h in elegidas:
-        resumenes[h.get("id")] = _resumen_costes_hipoteca(h, amort_anual)
+        resumenes[h.get("id")] = _resumen_costes_hipoteca(h, amort_anual, modo_amortizacion)
 
     def clave_orden(h: dict):
         rid = h.get("id")
@@ -460,7 +482,7 @@ def comparador(usuario_id: int):
             "Intereses totales (€)": round(r.get("intereses_totales", 0), 2),
             "Vinculados totales (€)": round(r.get("vinculados_totales", 0), 2),
             "Comisiones extra (€)": round(r.get("comisiones_por_extra", 0), 2),
-            "Años hasta fin": int(r.get("años_hasta_fin", 0)),
+            "Duración": _duracion_str(int(r.get("meses_hasta_fin", 0))),
             "Coste total (€)": round(r.get("coste_total", 0), 2),
         })
     df_ranking = pd.DataFrame(ranking_rows)
@@ -532,8 +554,47 @@ def comparador(usuario_id: int):
     c = hipo_tabla.get("cantidad_solicitada", 0)
     anos = hipo_tabla.get("duracion_anos", 25)
     tin = hipo_tabla.get("tin", 0)
+    cuota_base = am.cuota_mensual_frances(float(c or 0), float(tin or 0), int(anos or 0) * 12) if c and anos else 0.0
     rid = hipo_tabla.get("id")
-    cuadro = resumenes.get(rid, {}).get("cuadro") if rid in resumenes else am.cuadro_amortizacion_anual(c, tin, anos, amort_anual)
+    cuadro = (
+        resumenes.get(rid, {}).get("cuadro")
+        if rid in resumenes
+        else am.cuadro_amortizacion_anual(c, tin, anos, amort_anual, modo=modo_amortizacion)
+    )
+
+    # Resumen del efecto de la amortización según el modo (antes de la tabla)
+    if amort_anual and amort_anual > 0:
+        if modo_amortizacion == "reducir_cuota":
+            cuota_y2 = float(cuadro[1].get("cuota_mensual", 0) or 0) if len(cuadro) >= 2 else None
+            cuotas = [float(r.get("cuota_mensual", 0) or 0) for r in cuadro if r.get("cuota_mensual") is not None]
+            cuota_min = min(cuotas) if cuotas else None
+            cuota_ultimo = float(cuadro[-1].get("cuota_mensual", 0) or 0) if cuadro else None
+            if cuota_y2 is not None and cuota_base:
+                extra_txt = []
+                if cuota_ultimo is not None:
+                    extra_txt.append(
+                        f"Cuota último año: {cuota_ultimo:,.2f} € (↓ {(cuota_base - cuota_ultimo):,.2f} €)"
+                    )
+                if cuota_min is not None:
+                    extra_txt.append(
+                        f"Cuota mínima: {cuota_min:,.2f} € (↓ {(cuota_base - cuota_min):,.2f} €)"
+                    )
+                st.info(
+                    f"Con {amort_anual:,.0f} €/año, la cuota bajaría aprox. de {cuota_base:,.2f} € "
+                    f"a {cuota_y2:,.2f} € (a partir del año 2)."
+                    + (("\n\n" + " · ".join(extra_txt)) if extra_txt else "")
+                )
+            else:
+                st.info(f"Con {amort_anual:,.0f} €/año, la cuota bajaría con el tiempo (ver columna de cuota por año).")
+        else:
+            meses_sin_extra = int(anos) * 12
+            meses_con_extra = int(sum(r.get('meses_pagados', 0) for r in cuadro))
+            ahorro = max(0, meses_sin_extra - meses_con_extra)
+            st.info(
+                f"Con {amort_anual:,.0f} €/año manteniendo cuota ({cuota_base:,.2f} €), la duración bajaría de "
+                f"{_duracion_str(meses_sin_extra)} a {_duracion_str(meses_con_extra)} "
+                f"(ahorro {_duracion_str(ahorro)})."
+            )
     df = pd.DataFrame(cuadro)
     df = df.rename(columns={
         "año": "Año",
