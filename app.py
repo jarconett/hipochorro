@@ -310,6 +310,25 @@ def _coste_total_inmueble(inv: dict) -> float:
     return _desglose_gastos_compra(inv)["total"]
 
 
+def _precio_m2_inmueble(inv: dict) -> float | None:
+    """Precio por m² (importe / m² útiles o construidos). None si no hay superficie."""
+    m2 = float(inv.get("m2_utiles", 0) or 0) or float(inv.get("m2_construidos", 0) or 0)
+    if m2 <= 0:
+        return None
+    imp = float(inv.get("importe", 0) or 0)
+    return imp / m2 if imp else None
+
+
+def _titulo_inmueble(inv: dict) -> str:
+    """Título para listado y selector: localización — precio € — precio/m² (si hay m²)."""
+    loc = inv.get("localizacion", "") or "Sin ubicación"
+    imp = float(inv.get("importe", 0) or 0)
+    p = _precio_m2_inmueble(inv)
+    if p is not None:
+        return f"{loc} — {imp:,.0f} € — {p:,.0f} €/m²"
+    return f"{loc} — {imp:,.0f} €"
+
+
 def formulario_hipoteca(usuario_id: int):
     """Formulario de alta de hipoteca con todos los campos."""
     st.subheader("Alta de hipoteca bancaria")
@@ -1074,7 +1093,7 @@ def agenda_inmuebles(usuario_id: int):
         st.markdown("---")
         st.subheader("Inmuebles dados de alta")
         for inv in inmuebles:
-            titulo = f"{inv.get('localizacion', 'Sin ubicación')} — {inv.get('importe', 0):,.0f} €"
+            titulo = _titulo_inmueble(inv)
             with st.expander(titulo):
                 fotos_urls = ghd.get_fotos_inmueble_urls(usuario_id, inv.get("id"))
                 if fotos_urls:
@@ -1085,7 +1104,9 @@ def agenda_inmuebles(usuario_id: int):
                 hab = inv.get("habitaciones")
                 ban = inv.get("banos")
                 cert = inv.get("certificado_energetico") or "—"
-                st.caption(f"ID: {inv.get('id')} · m² útiles: {inv.get('m2_utiles')} · Año: {inv.get('ano_construccion')} · {hab or 0} hab. · {ban or 0} baños · Cert. energético: {cert}")
+                p_m2 = _precio_m2_inmueble(inv)
+                p_m2_str = f" · **{p_m2:,.0f} €/m²**" if p_m2 is not None else ""
+                st.caption(f"ID: {inv.get('id')} · m² útiles: {inv.get('m2_utiles')} · Año: {inv.get('ano_construccion')} · {hab or 0} hab. · {ban or 0} baños · Cert. energético: {cert}{p_m2_str}")
                 if inv.get("notas"):
                     st.caption(f"📝 Notas: {inv.get('notas')}")
                 d = _desglose_gastos_compra(inv)
@@ -1542,7 +1563,7 @@ def main():
 
     # Selector de inmueble para simular hipoteca
     inmuebles = ghd.get_inmuebles(u["id"])
-    opts_inv = ["— Ninguno —"] + [f"{inv.get('localizacion', '')} — {inv.get('importe', 0):,.0f} €" for inv in inmuebles]
+    opts_inv = ["— Ninguno —"] + [_titulo_inmueble(inv) for inv in inmuebles]
     sel_inv = st.sidebar.selectbox(
         "Inmueble para simular hipoteca",
         opts_inv,
