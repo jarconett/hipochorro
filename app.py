@@ -991,6 +991,13 @@ def _editor_inmueble(usuario_id: int, inv: dict):
         ano_construccion = st.number_input("Año construcción", min_value=1800, max_value=2030, value=int(inv.get("ano_construccion", 0) or 0), step=1, key=f"ei_ano_{inv_id}")
         m2_construidos = st.number_input("m² construidos", min_value=0.0, value=float(inv.get("m2_construidos", 0) or 0), step=1.0, key=f"ei_m2c_{inv_id}")
         m2_utiles = st.number_input("m² útiles", min_value=0.0, value=float(inv.get("m2_utiles", 0) or 0), step=1.0, key=f"ei_m2u_{inv_id}")
+        habitaciones = st.number_input("Habitaciones", min_value=0, max_value=20, value=int(inv.get("habitaciones", 0) or 0), step=1, key=f"ei_hab_{inv_id}")
+        banos = st.number_input("Baños", min_value=0, max_value=10, value=int(inv.get("banos", 0) or 0), step=1, key=f"ei_ban_{inv_id}")
+        cert_opciones = ["—", "A", "B", "C", "D", "E", "F", "G", "En trámite", "No disponible"]
+        cert_actual = inv.get("certificado_energetico") or "—"
+        cert_idx = cert_opciones.index(cert_actual) if cert_actual in cert_opciones else 0
+        certificado_energetico = st.selectbox("Certificado energético", cert_opciones, index=cert_idx, key=f"ei_cert_{inv_id}")
+        notas = st.text_area("Notas", value=inv.get("notas", "") or "", height=80, key=f"ei_notas_{inv_id}")
         col1, col2, col3 = st.columns(3)
         with col1:
             piscina = st.checkbox("Piscina", value=bool(inv.get("piscina", False)), key=f"ei_pis_{inv_id}")
@@ -1001,7 +1008,7 @@ def _editor_inmueble(usuario_id: int, inv: dict):
         comision_venta_pct = st.number_input("% comisión venta (inmobiliaria)", min_value=0.0, max_value=20.0, value=float(inv.get("comision_venta_pct", 0) or 0), step=0.5, key=f"ei_com_{inv_id}")
         url_anuncio = st.text_input("URL del anuncio", value=inv.get("url_anuncio", "") or "", key=f"ei_url_{inv_id}")
         if st.form_submit_button("Guardar cambios"):
-            inv_act = {**inv, "importe": importe, "localizacion": localizacion, "ano_construccion": int(ano_construccion), "m2_construidos": m2_construidos, "m2_utiles": m2_utiles, "piscina": piscina, "sotano": sotano, "inmobiliaria": inmobiliaria, "comision_venta_pct": comision_venta_pct, "url_anuncio": url_anuncio.strip()}
+            inv_act = {**inv, "importe": importe, "localizacion": localizacion, "ano_construccion": int(ano_construccion), "m2_construidos": m2_construidos, "m2_utiles": m2_utiles, "habitaciones": int(habitaciones), "banos": int(banos), "certificado_energetico": certificado_energetico if certificado_energetico != "—" else "", "notas": (notas or "").strip(), "piscina": piscina, "sotano": sotano, "inmobiliaria": inmobiliaria, "comision_venta_pct": comision_venta_pct, "url_anuncio": url_anuncio.strip()}
             if ghd.actualizar_inmueble(usuario_id, inv_act):
                 st.success("Inmueble actualizado.")
                 st.rerun()
@@ -1028,6 +1035,10 @@ def agenda_inmuebles(usuario_id: int):
         ano_construccion = st.number_input("Año de construcción", min_value=1800, max_value=2030, value=2000, step=1)
         m2_construidos = st.number_input("m² construidos", min_value=0.0, value=90.0, step=1.0)
         m2_utiles = st.number_input("m² útiles", min_value=0.0, value=75.0, step=1.0)
+        habitaciones = st.number_input("Habitaciones", min_value=0, max_value=20, value=3, step=1)
+        banos = st.number_input("Baños", min_value=0, max_value=10, value=2, step=1)
+        certificado_energetico = st.selectbox("Certificado energético", ["—", "A", "B", "C", "D", "E", "F", "G", "En trámite", "No disponible"])
+        notas = st.text_area("Notas", placeholder="Observaciones sobre la vivienda…", height=80)
         piscina = st.checkbox("Piscina", value=False)
         sotano = st.checkbox("Sótano", value=False)
         tipo_venta = st.radio("Tipo de venta", ["Particular", "Inmobiliaria"], horizontal=True)
@@ -1041,6 +1052,10 @@ def agenda_inmuebles(usuario_id: int):
                 "ano_construccion": int(ano_construccion),
                 "m2_construidos": float(m2_construidos),
                 "m2_utiles": float(m2_utiles),
+                "habitaciones": int(habitaciones),
+                "banos": int(banos),
+                "certificado_energetico": certificado_energetico if certificado_energetico != "—" else "",
+                "notas": (notas or "").strip(),
                 "piscina": bool(piscina),
                 "sotano": bool(sotano),
                 "inmobiliaria": bool(inmobiliaria),
@@ -1067,7 +1082,12 @@ def agenda_inmuebles(usuario_id: int):
                         st.image(fotos_urls[0], caption="Foto del anuncio", use_container_width=True)
                     except Exception:
                         pass
-                st.caption(f"ID: {inv.get('id')} · m² útiles: {inv.get('m2_utiles')} · Año: {inv.get('ano_construccion')}")
+                hab = inv.get("habitaciones")
+                ban = inv.get("banos")
+                cert = inv.get("certificado_energetico") or "—"
+                st.caption(f"ID: {inv.get('id')} · m² útiles: {inv.get('m2_utiles')} · Año: {inv.get('ano_construccion')} · {hab or 0} hab. · {ban or 0} baños · Cert. energético: {cert}")
+                if inv.get("notas"):
+                    st.caption(f"📝 Notas: {inv.get('notas')}")
                 d = _desglose_gastos_compra(inv)
                 st.caption(f"Coste total compra: **{d['total']:,.0f} €** (precio + comisión + ITP {ITP_PCT}% + notaría + registro + gestoría {GESTORIA_EUR:.0f} €)")
                 if inv.get("url_anuncio"):
