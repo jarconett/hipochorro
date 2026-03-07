@@ -385,8 +385,8 @@ def _titulo_inmueble(inv: dict) -> str:
     imp = float(inv.get("importe", 0) or 0)
     p = _precio_m2_inmueble(inv)
     if p is not None:
-        return f"{loc} — {imp:,.0f} € — {p:,.0f} €/m²"
-    return f"{loc} — {imp:,.0f} €"
+        return f"{loc} — {imp:.0f} € — {p:.0f} €/m²"
+    return f"{loc} — {imp:.0f} €"
 
 
 def _geocode_nominatim(direccion: str) -> tuple[float, float] | None:
@@ -534,7 +534,7 @@ def formulario_hipoteca(usuario_id: int):
     def_cantidad = 150000.0
     if inv_sel and isinstance(inv_sel, dict):
         def_valor = _coste_total_inmueble(inv_sel)
-        st.caption(f"💡 Valor del inmueble seleccionado en el sidebar: {inv_sel.get('localizacion', '')} — coste total {def_valor:,.0f} €")
+        st.caption(f"💡 Valor del inmueble seleccionado en el sidebar: {inv_sel.get('localizacion', '')} — coste total {def_valor:.0f} €")
     logo_subir = st.file_uploader("Logo: sube imagen (PNG/JPG) si no usas dominio", type=["png", "jpg", "jpeg"], key="logo_upload")
     with st.form("form_hipoteca"):
         nombre_entidad = st.text_input("Nombre entidad *", placeholder="Ej: BBVA, Santander, CaixaBank")
@@ -1429,12 +1429,12 @@ def agenda_inmuebles(usuario_id: int):
                     p_m2 = _precio_m2_inmueble(inv)
                     cert_consumo = inv.get("certificado_consumo") or inv.get("certificado_energetico") or "—"
                     cert_emisiones = inv.get("certificado_emisiones") or inv.get("certificado_energetico") or "—"
-                    p_m2_str = f" · **{p_m2:,.0f} €/m²**" if p_m2 is not None else ""
+                    p_m2_str = f" · **{p_m2:.0f} €/m²**" if p_m2 is not None else ""
                     st.caption(f"ID: {inv.get('id')} · m² útiles: {inv.get('m2_utiles')} · Año: {inv.get('ano_construccion')} · {hab or 0} hab. · {ban or 0} baños · Cert. consumo: {cert_consumo} · emisiones: {cert_emisiones}{p_m2_str}")
                     if inv.get("notas"):
                         st.caption(f"📝 Notas: {inv.get('notas')}")
                     d = _desglose_gastos_compra(inv)
-                    st.caption(f"Coste total compra: **{d['total']:,.0f} €** (precio + comisión + ITP {ITP_PCT}% + notaría + registro + gestoría {GESTORIA_EUR:.0f} €)")
+                    st.caption(f"Coste total compra: **{d['total']:.0f} €** (precio + comisión + ITP {ITP_PCT}% + notaría + registro + gestoría {GESTORIA_EUR:.0f} €)")
                     if inv.get("url_anuncio"):
                         st.markdown(f"[Ver anuncio]({inv['url_anuncio']})")
                     inv_id = inv.get("id")
@@ -1580,20 +1580,20 @@ def _tab_amortizar_o_invertir(usuario_id: int):
     col_amort, col_inv = st.columns(2)
     with col_amort:
         st.markdown("### 📉 Amortizar")
-        st.metric("Intereses ahorrados (vida préstamo)", f"{intereses_ahorrados:,.0f} €")
-        st.metric("Comisiones por amortización", f"{comisiones_totales:,.0f} €")
-        st.metric("**Ahorro neto**", f"**{ahorro_neto_amort:,.0f} €**")
+        st.metric("Intereses ahorrados (vida préstamo)", f"{intereses_ahorrados:.0f} €")
+        st.metric("Comisiones por amortización", f"{comisiones_totales:.0f} €")
+        st.metric("**Ahorro neto**", f"**{ahorro_neto_amort:.0f} €**")
     with col_inv:
         st.markdown("### 📈 Invertir")
-        st.metric("Rendimiento bruto", f"{rendimiento_bruto:,.0f} €")
-        st.metric("Retención (rentas ahorro)", f"{retencion:,.0f} €")
-        st.metric("**Beneficio neto**", f"**{beneficio_neto_inv:,.0f} €**")
+        st.metric("Rendimiento bruto", f"{rendimiento_bruto:.0f} €")
+        st.metric("Retención (rentas ahorro)", f"{retencion:.0f} €")
+        st.metric("**Beneficio neto**", f"**{beneficio_neto_inv:.0f} €**")
 
     st.markdown("---")
     if ahorro_neto_amort > beneficio_neto_inv:
-        st.success(f"**En estos datos, sale a cuenta amortizar:** ahorro neto {ahorro_neto_amort:,.0f} € frente a beneficio neto por invertir {beneficio_neto_inv:,.0f} €.")
+        st.success(f"**En estos datos, sale a cuenta amortizar:** ahorro neto {ahorro_neto_amort:.0f} € frente a beneficio neto por invertir {beneficio_neto_inv:.0f} €.")
     elif beneficio_neto_inv > ahorro_neto_amort:
-        st.success(f"**En estos datos, sale a cuenta invertir:** beneficio neto {beneficio_neto_inv:,.0f} € frente a ahorro por amortizar {ahorro_neto_amort:,.0f} €.")
+        st.success(f"**En estos datos, sale a cuenta invertir:** beneficio neto {beneficio_neto_inv:.0f} € frente a ahorro por amortizar {ahorro_neto_amort:.0f} €.")
     else:
         st.info("Ambas opciones dan un resultado equivalente con los datos introducidos.")
     st.markdown("**Comparativa visual**")
@@ -1610,7 +1610,7 @@ def comparador(usuario_id: int):
     inv_sel = st.session_state.get("inmueble_seleccionado")
     if inv_sel and isinstance(inv_sel, dict):
         coste = _coste_total_inmueble(inv_sel)
-        st.info(f"**Vivienda seleccionada** (sidebar): {inv_sel.get('localizacion', '')} — Coste total compra (con ITP, notaría, registro, gestoría): **{coste:,.0f} €**")
+        st.info(f"**Vivienda seleccionada** (sidebar): {inv_sel.get('localizacion', '')} — Coste total compra (con ITP, notaría, registro, gestoría): **{coste:.0f} €**")
     hipotecas = ghd.get_hipotecas(usuario_id)
     st.session_state.hipotecas_cache = hipotecas
     if not hipotecas:
@@ -1823,10 +1823,10 @@ def comparador(usuario_id: int):
                 st.success("Más ventajosa")
             st.metric("TAE", f"{h.get('tae', 0):.2f}%")
             st.metric("TIN", f"{h.get('tin', 0):.2f}%")
-            st.metric("Cuota aprox. (€)", f"{am.cuota_mensual_frances(h.get('cantidad_solicitada',0), h.get('tin',0), h.get('duracion_anos',25)*12):,.0f}")
-            st.caption(f"Coste vinculados/año: {coste_anual_vinculados(h):,.0f} €")
+            st.metric("Cuota aprox. (€)", f"{am.cuota_mensual_frances(h.get('cantidad_solicitada',0), h.get('tin',0), h.get('duracion_anos',25)*12):.0f}")
+            st.caption(f"Coste vinculados/año: {coste_anual_vinculados(h):.0f} €")
             r = resumenes.get(h.get("id"), {})
-            st.caption(f"Coste total (según criterio): {r.get('coste_total', 0):,.0f} €")
+            st.caption(f"Coste total (según criterio): {r.get('coste_total', 0):.0f} €")
 
     # Tabla de cuotas por año (amortización francesa) para la primera selección o selector
     st.markdown("---")
@@ -1869,25 +1869,25 @@ def comparador(usuario_id: int):
                 extra_txt = []
                 if cuota_ultimo is not None:
                     extra_txt.append(
-                        f"Cuota último año: {cuota_ultimo:,.2f} € (↓ {(cuota_base - cuota_ultimo):,.2f} €)"
+                        f"Cuota último año: {cuota_ultimo:.2f} € (↓ {(cuota_base - cuota_ultimo):.2f} €)"
                     )
                 if cuota_min is not None:
                     extra_txt.append(
-                        f"Cuota mínima: {cuota_min:,.2f} € (↓ {(cuota_base - cuota_min):,.2f} €)"
+                        f"Cuota mínima: {cuota_min:.2f} € (↓ {(cuota_base - cuota_min):.2f} €)"
                     )
                 st.info(
-                    f"Con {amort_anual:,.0f} €/año, la cuota bajaría aprox. de {cuota_base:,.2f} € "
-                    f"a {cuota_y2:,.2f} € (a partir del año 2)."
+                    f"Con {amort_anual:.0f} €/año, la cuota bajaría aprox. de {cuota_base:.2f} € "
+                    f"a {cuota_y2:.2f} € (a partir del año 2)."
                     + (("\n\n" + " · ".join(extra_txt)) if extra_txt else "")
                 )
             else:
-                st.info(f"Con {amort_anual:,.0f} €/año, la cuota bajaría con el tiempo (ver columna de cuota por año).")
+                st.info(f"Con {amort_anual:.0f} €/año, la cuota bajaría con el tiempo (ver columna de cuota por año).")
         elif modo_tipo == "reducir_plazo":
             meses_sin_extra = int(anos) * 12
             meses_con_extra = int(sum(r.get('meses_pagados', 0) for r in cuadro))
             ahorro = max(0, meses_sin_extra - meses_con_extra)
             st.info(
-                f"Con {amort_anual:,.0f} €/año manteniendo cuota ({cuota_base:,.2f} €), la duración bajaría de "
+                f"Con {amort_anual:.0f} €/año manteniendo cuota ({cuota_base:.2f} €), la duración bajaría de "
                 f"{_duracion_str(meses_sin_extra)} a {_duracion_str(meses_con_extra)} "
                 f"(ahorro {_duracion_str(ahorro)})."
             )
@@ -1902,9 +1902,9 @@ def comparador(usuario_id: int):
             if plan_params:
                 detalle.append(f"Reparto: {plan_params['anos_fase1']} años en fase 1")
             if cuota_min is not None and cuota_base:
-                detalle.append(f"Cuota mínima: {cuota_min:,.2f} € (↓ {(cuota_base - cuota_min):,.2f} €)")
+                detalle.append(f"Cuota mínima: {cuota_min:.2f} € (↓ {(cuota_base - cuota_min):.2f} €)")
             if cuota_ultimo is not None and cuota_base:
-                detalle.append(f"Cuota último año: {cuota_ultimo:,.2f} € (↓ {(cuota_base - cuota_ultimo):,.2f} €)")
+                detalle.append(f"Cuota último año: {cuota_ultimo:.2f} € (↓ {(cuota_base - cuota_ultimo):.2f} €)")
             st.info(
                 f"Modo mixto: duración de {_duracion_str(meses_sin_extra)} a {_duracion_str(meses_con_extra)} "
                 f"(ahorro {_duracion_str(ahorro)})."
@@ -2034,17 +2034,17 @@ def main():
         inv = st.session_state.inmueble_seleccionado
         d = _desglose_gastos_compra(inv)
         coste = d["total"]
-        st.sidebar.caption(f"Coste total compra: **{coste:,.0f} €**")
+        st.sidebar.caption(f"Coste total compra: **{coste:.0f} €**")
         with st.sidebar.expander("Desglose gastos compra"):
-            st.caption(f"Precio: {d['precio']:,.0f} €")
+            st.caption(f"Precio: {d['precio']:.0f} €")
             if d["comision"] > 0:
-                st.caption(f"Comisión: {d['comision']:,.0f} €")
-            st.caption(f"ITP ({ITP_PCT}%): {d['itp']:,.0f} €")
-            st.caption(f"Notaría ({NOTARIA_PCT_DEL_ITP}% ITP): {d['notaria']:,.0f} €")
-            st.caption(f"Registro ({REGISTRO_PCT_DEL_ITP}% ITP): {d['registro']:,.0f} €")
-            st.caption(f"Gestoría: {d['gestoria']:,.0f} €")
+                st.caption(f"Comisión: {d['comision']:.0f} €")
+            st.caption(f"ITP ({ITP_PCT}%): {d['itp']:.0f} €")
+            st.caption(f"Notaría ({NOTARIA_PCT_DEL_ITP}% ITP): {d['notaria']:.0f} €")
+            st.caption(f"Registro ({REGISTRO_PCT_DEL_ITP}% ITP): {d['registro']:.0f} €")
+            st.caption(f"Gestoría: {d['gestoria']:.0f} €")
             st.caption("---")
-            st.caption(f"**Total gastos compra: {d['total']:,.0f} €**")
+            st.caption(f"**Total gastos compra: {d['total']:.0f} €**")
 
     st.sidebar.markdown("---")
     st.sidebar.caption(f"**Hipochorro** v{VERSION_APP}")
