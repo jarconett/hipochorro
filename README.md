@@ -12,8 +12,8 @@ Simulador y comparador de hipotecas en España. Pensado para ejecutarse en **Str
 2. **Alta de hipotecas**: Formulario con:
    - Nombre entidad y descarga de logo por dominio (ej. `bbva.com`), guardando la imagen en `data/logos/`.
    - Nombre hipoteca, duración, cantidad solicitada, % financiación, TIN, TAE.
-   - Comisión amortización parcial, mantenimiento, tasación, bonificación nómina, seguros (hogar, vida), alarma, protección de pagos, pensión, Bizum, tarjeta de crédito.
-3. **Comparador**: Selección de varias hipotecas, indicación visual de la más ventajosa (TAE, coste primer año, vinculados), campo de amortización extraordinaria anual y cuadro de amortización por años con **sistema francés**.
+   - Comisión de apertura, comisión amortización parcial, mantenimiento, tasación, bonificación nómina, seguros (hogar, vida), alarma, protección de pagos, pensión, Bizum, tarjeta de crédito.
+3. **Comparador**: Selección de varias hipotecas, indicación visual de la más ventajosa (TAE, % comisión de apertura, coste primer año, vinculados), campo de amortización extraordinaria anual y cuadro de amortización por años con **sistema francés**.
 4. **Branding**: portada con logo y favicon desde `assets/`.
 
 ## Despliegue en Streamlit Cloud

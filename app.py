@@ -389,6 +389,14 @@ def formulario_hipoteca(usuario_id: int):
             step=0.1,
             format="%.2f",
         )
+        comision_apertura_pct = st.number_input(
+            "Comisión de apertura (%)",
+            min_value=0.0,
+            value=0.0,
+            step=0.1,
+            format="%.2f",
+            help="Se aplica una sola vez al inicio sobre el capital solicitado.",
+        )
         mantenimiento = st.number_input("Mantenimiento cuenta (€/año)", min_value=0.0, value=0.0, step=10.0)
         mantenimiento_tarjeta = st.number_input("Mantenimiento tarjeta (€/año)", min_value=0.0, value=0.0, step=10.0)
         tasacion = st.number_input("Tasación (€)", min_value=0.0, value=0.0, step=50.0)
@@ -443,6 +451,7 @@ def formulario_hipoteca(usuario_id: int):
                 "anos_bonif_amort_parcial": int(anos_bonif_amort_parcial),
                 "comision_amort_parcial_bonif": float(comision_amort_parcial_bonif),
                 "comision_amort_parcial": float(comision_amort_parcial),
+                "comision_apertura_pct": float(comision_apertura_pct),
                 "mantenimiento": float(mantenimiento),
                 "mantenimiento_tarjeta": float(mantenimiento_tarjeta),
                 "tasacion": float(tasacion),
@@ -560,6 +569,15 @@ def _editor_hipoteca(usuario_id: int, h: dict):
             format="%.2f",
             key=f"e_com_{hid}",
         )
+        comision_apertura_pct = st.number_input(
+            "Comisión de apertura (%)",
+            min_value=0.0,
+            value=float(h.get("comision_apertura_pct", h.get("comision_apertura", 0) or 0)),
+            step=0.1,
+            format="%.2f",
+            help="Se aplica una sola vez al inicio sobre el capital solicitado.",
+            key=f"e_com_ap_{hid}",
+        )
         mantenimiento = st.number_input("Mantenimiento cuenta (€/año)", min_value=0.0, value=float(h.get("mantenimiento", 0) or 0), step=10.0, key=f"e_man_{hid}")
         mantenimiento_tarjeta = st.number_input("Mantenimiento tarjeta (€/año)", min_value=0.0, value=float(h.get("mantenimiento_tarjeta", 0) or 0), step=10.0, key=f"e_man_tar_{hid}")
         tasacion = st.number_input("Tasación (€)", min_value=0.0, value=float(h.get("tasacion", 0) or 0), step=50.0, key=f"e_tas_{hid}")
@@ -617,6 +635,7 @@ def _editor_hipoteca(usuario_id: int, h: dict):
             "anos_bonif_amort_parcial": int(anos_bonif_amort_parcial),
             "comision_amort_parcial_bonif": float(comision_amort_parcial_bonif),
             "comision_amort_parcial": float(comision_amort_parcial),
+            "comision_apertura_pct": float(comision_apertura_pct),
             "mantenimiento": float(mantenimiento),
             "mantenimiento_tarjeta": float(mantenimiento_tarjeta),
             "tasacion": float(tasacion),
@@ -892,7 +911,7 @@ def _coste_anual_vinculados_año(
 
 
 def coste_total_primero_ano(h: dict) -> float:
-    """Aproximación coste primer año: intereses + vinculados + tasación (una vez)."""
+    """Aproximación coste primer año: intereses + vinculados + tasación + comisión de apertura (una vez)."""
     from lib.amortizacion import cuota_mensual_frances
     c = h.get("cantidad_solicitada", 0)
     n = h.get("duracion_anos", 25) * 12
@@ -907,8 +926,10 @@ def coste_total_primero_ano(h: dict) -> float:
         am = cuota - im
         intereses += im
         cap -= am
+    comision_apertura_pct = float(h.get("comision_apertura_pct", h.get("comision_apertura", 0)) or 0)
+    comision_apertura = (comision_apertura_pct / 100.0) * float(c or 0)
     bonif_firma = float(h.get("bonificacion_firma", 0) or 0)
-    return intereses + coste_anual_vinculados(h) + float(h.get("tasacion", 0) or 0) - bonif_firma
+    return intereses + coste_anual_vinculados(h) + float(h.get("tasacion", 0) or 0) + comision_apertura - bonif_firma
 
 
 def _duracion_str(meses: int) -> str:
@@ -937,7 +958,7 @@ def _resumen_costes_hipoteca(
     - pagado_extra
     - comisiones_por_extra
     - vinculados_totales
-    - coste_total (intereses + vinculados + tasación + comisiones)
+    - coste_total (intereses + vinculados + tasación + comisión de apertura + comisiones)
     """
     precios_externos = precios_externos or {}
     capital = float(h.get("cantidad_solicitada", 0) or 0)
@@ -945,6 +966,7 @@ def _resumen_costes_hipoteca(
     tin_base = _get_tin_base(h)
     tae = float(h.get("tae", 0) or 0)
     comision_pct = float(h.get("comision_amort_parcial", 0) or 0)
+    comision_apertura_pct = float(h.get("comision_apertura_pct", h.get("comision_apertura", 0)) or 0)
 
     # Bonificaciones aplicadas (en p.p. sobre TIN)
     incluir = {
@@ -981,6 +1003,7 @@ def _resumen_costes_hipoteca(
     pagado_en_cuotas = sum((r.get("cuota_mensual", 0) * r.get("meses_pagados", 0)) for r in cuadro)
     pagado_extra = sum(r.get("extra_año", 0) for r in cuadro)
     comisiones_por_extra = (comision_pct / 100.0) * pagado_extra
+    comision_apertura = (comision_apertura_pct / 100.0) * capital
     vinculados_totales = sum(
         _coste_anual_vinculados_año(h, y, precios_externos, usar_externos)
         for y in range(1, len(cuadro) + 1)
@@ -988,7 +1011,14 @@ def _resumen_costes_hipoteca(
     coste_anual = _coste_anual_vinculados_año(h, 1, precios_externos, usar_externos)
 
     bonificacion_firma = float(h.get("bonificacion_firma", 0) or 0)
-    coste_total = intereses_totales + vinculados_totales + float(h.get("tasacion", 0) or 0) + comisiones_por_extra - bonificacion_firma
+    coste_total = (
+        intereses_totales
+        + vinculados_totales
+        + float(h.get("tasacion", 0) or 0)
+        + comision_apertura
+        + comisiones_por_extra
+        - bonificacion_firma
+    )
 
     return {
         "tae": tae,
@@ -1003,6 +1033,8 @@ def _resumen_costes_hipoteca(
         "pagado_en_cuotas": float(pagado_en_cuotas),
         "pagado_extra": float(pagado_extra),
         "comisiones_por_extra": float(comisiones_por_extra),
+        "comision_apertura_pct": float(comision_apertura_pct),
+        "comision_apertura": float(comision_apertura),
         "vinculados_totales": float(vinculados_totales),
         "bonificacion_firma": float(bonificacion_firma),
         "coste_total": float(coste_total),
@@ -1298,10 +1330,11 @@ def comparador(usuario_id: int):
     criterio = st.selectbox(
         "¿Qué significa “más ventajosa”?",
         [
-            "Coste total (intereses + vinculados + tasación + comisiones por amortización extra)",
+            "Coste total (intereses + vinculados + tasación + comisión de apertura + comisiones por amortización extra)",
             "TAE (menor es mejor)",
+            "Comisión de apertura (%) (menor es mejor)",
             "Cuota mensual inicial (menor es mejor)",
-            "Coste primer año (intereses reales año 1 + vinculados + tasación)",
+            "Coste primer año (intereses reales año 1 + vinculados + tasación + comisión de apertura)",
         ],
         key="criterio_comp",
     )
@@ -1332,6 +1365,8 @@ def comparador(usuario_id: int):
         r = resumenes.get(rid, {})
         if criterio.startswith("TAE"):
             return r.get("tae", 9999)
+        if criterio.startswith("Comisión de apertura"):
+            return r.get("comision_apertura_pct", float(h.get("comision_apertura_pct", h.get("comision_apertura", 0)) or 0))
         if criterio.startswith("Cuota"):
             return r.get("cuota_inicial", 9e18)
         if criterio.startswith("Coste primer año"):
@@ -1349,6 +1384,7 @@ def comparador(usuario_id: int):
             "Entidad": h.get("nombre_entidad", ""),
             "Hipoteca": h.get("nombre_hipoteca", ""),
             "TAE (%)": float(h.get("tae", 0) or 0),
+            "Comisión apertura (%)": float(r.get("comision_apertura_pct", h.get("comision_apertura_pct", h.get("comision_apertura", 0) or 0))),
             "TIN base (%)": float(r.get("tin_base", h.get("tin", 0) or 0)),
             "Bonif. TIN (p.p.)": float(r.get("bonif_pp", 0) or 0),
             "TIN efectivo (%)": float(r.get("tin_efectivo", h.get("tin", 0) or 0)),
@@ -1356,6 +1392,7 @@ def comparador(usuario_id: int):
             "Intereses totales (€)": round(r.get("intereses_totales", 0), 2),
             "Vinculados/año usados (€)": round(r.get("coste_anual_vinculados", 0), 2),
             "Vinculados totales (€)": round(r.get("vinculados_totales", 0), 2),
+            "Comisión apertura (€)": round(r.get("comision_apertura", 0), 2),
             "Bonif. firma (€)": round(r.get("bonificacion_firma", 0), 2),
             "Comisiones extra (€)": round(r.get("comisiones_por_extra", 0), 2),
             "Duración": _duracion_str(int(r.get("meses_hasta_fin", 0))),
@@ -1409,6 +1446,7 @@ def comparador(usuario_id: int):
             st.metric("TAE", f"{h.get('tae', 0):.2f}%")
             st.metric("TIN", f"{h.get('tin', 0):.2f}%")
             st.metric("Cuota aprox. (€)", f"{am.cuota_mensual_frances(h.get('cantidad_solicitada',0), h.get('tin',0), h.get('duracion_anos',25)*12):,.0f}")
+            st.caption(f"Comisión apertura: {float(h.get('comision_apertura_pct', h.get('comision_apertura', 0) or 0)):.2f}%")
             st.caption(f"Coste vinculados/año: {coste_anual_vinculados(h):,.0f} €")
             r = resumenes.get(h.get("id"), {})
             st.caption(f"Coste total (según criterio): {r.get('coste_total', 0):,.0f} €")
@@ -1644,7 +1682,7 @@ def main():
         **Hipochorro** guarda usuarios e hipotecas en el repositorio GitHub **jarconett/hipochorro**.
         - En **Streamlit Cloud** configura el secret `GITHUB_TOKEN` con un token de acceso al repo (con permisos de escritura).
         - Los logos se intentan descargar por dominio (ej. `bbva.com`) y se almacenan en `data/logos/`.
-        - El comparador ordena por TAE, coste primer año y productos vinculados para señalar la opción más ventajosa.
+        - El comparador ordena por TAE, comisión de apertura, coste primer año y productos vinculados para señalar la opción más ventajosa.
         - El cuadro de amortización usa el **sistema francés** (cuota constante) y permite amortización extraordinaria anual.
         """)
 
