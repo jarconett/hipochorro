@@ -1,26 +1,6 @@
 {
   "inmuebles": [
     {
-      "importe": 285000.0,
-      "localizacion": "Calle Alhelí 28 el chaparral Albolote",
-      "ano_construccion": 2008,
-      "m2_construidos": 248.0,
-      "m2_utiles": 197.0,
-      "piscina": false,
-      "sotano": true,
-      "inmobiliaria": true,
-      "comision_venta_pct": 2.5,
-      "url_anuncio": "https://www.idealista.com/inmueble/110670317/",
-      "id": 1,
-      "habitaciones": 4,
-      "banos": 3,
-      "certificado_consumo": "E",
-      "certificado_emisiones": "D",
-      "notas": "",
-      "lat": 37.254439737859215,
-      "lon": -3.6545473337173466
-    },
-    {
       "importe": 150000.0,
       "localizacion": "",
       "ano_construccion": 2000,
