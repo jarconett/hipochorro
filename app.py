@@ -136,6 +136,8 @@ st.markdown(
     [data-theme="dark"] .stTabs [data-baseweb="tab"][aria-selected="true"] span { color: #64b5f6 !important; }
     /* Si el layout duplica el bloque de tabs (p. ej. en scroll), ocultar el segundo */
     [data-testid="stTabs"] ~ [data-testid="stTabs"] { display: none !important; }
+    /* Evitar que al hacer scroll se repita el bloque de login/contenido inicial (duplicado de layout) */
+    .block-container ~ .block-container { display: none !important; }
     </style>
     """,
     unsafe_allow_html=True,
@@ -1621,6 +1623,8 @@ def _tab_amortizar_o_invertir(usuario_id: int):
     )
     st.bar_chart(df_comp, height=280)
     st.caption("Amortizar: ahorro total en vida del préstamo (intereses evitados − comisiones). Invertir: beneficio neto con los datos introducidos (después de retención).")
+    if st.button("Recalcular", key="amort_inv_recalcular", help="Vuelve a calcular con los valores actuales (útil si has cambiado cantidades)."):
+        st.rerun()
 
 
 def comparador(usuario_id: int):
