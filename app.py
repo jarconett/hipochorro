@@ -10,6 +10,7 @@ _root = Path(__file__).resolve().parent
 if str(_root) not in sys.path:
     sys.path.insert(0, str(_root))
 
+import math
 import re
 from datetime import datetime
 import streamlit as st
@@ -21,6 +22,7 @@ from urllib.parse import urljoin, urlparse
 
 from lib import github_data as ghd
 from lib import amortizacion as am
+from lib import zonas_climaticas_cte as zcte
 
 try:
     from PIL import Image
@@ -64,6 +66,119 @@ GESTORIA_EUR = 300.0    # Gestoría: importe fijo (€)
 
 # Opciones certificado energético (consumo y emisiones)
 CERT_ENERGETICO_OPCIONES = ["—", "A", "B", "C", "D", "E", "F", "G", "En trámite", "No disponible"]
+
+# Consumo de energía (kWh/m²·año) por letra del certificado — tabla oficial (rangos de calificación)
+# Fuente: tabla de consumo y emisiones del certificado energético (tabla-energetica.png)
+# Rangos consumo: A <55, B 55-85, C 85-125, D 125-175, E 175-230, F 230-275, G ≥275 → punto medio para estimar
+CONSUMO_REFERENCIA_KWH_M2_POR_LETRA = {
+    "A": 27.5,   # < 55
+    "B": 70.0,   # 55-85
+    "C": 105.0,  # 85-125
+    "D": 150.0,  # 125-175
+    "E": 202.5,  # 175-230
+    "F": 252.5,  # 230-275
+    "G": 287.5,  # ≥ 275 (representativo)
+}
+
+# Zona climática CTE (Código Técnico de la Edificación): opciones para selectbox
+ZONAS_CTE_OPCIONES = zcte.get_opciones_zona()
+
+# Reducción mínima demanda térmica para subvención según zona CTE (letra A–E)
+# A y B: normalmente no obligatoria; C: ≥ 25 %; D y E: ≥ 35 %
+def _reduccion_subvencion_por_zona_cte(zona_cte: str) -> str:
+    """Devuelve texto de reducción mínima para subvención según la letra de la zona (ej. C3 → C)."""
+    if not (zona_cte or "").strip():
+        return ""
+    letra = (zona_cte.strip().upper())[:1]
+    if letra in ("A", "B"):
+        return "Reducción mín. demanda térmica para subvención: normalmente no obligatoria"
+    if letra == "C":
+        return "Reducción mín. demanda térmica para subvención: ≥ 25 %"
+    if letra in ("D", "E"):
+        return "Reducción mín. demanda térmica para subvención: ≥ 35 %"
+    return ""
+
+
+def _reduccion_decimal_por_zona_cte(zona_cte: str) -> float | None:
+    """Devuelve la reducción mínima como decimal (0.25, 0.35) para zona C, D o E; None para A/B (no obligatoria)."""
+    if not (zona_cte or "").strip():
+        return None
+    letra = (zona_cte.strip().upper())[:1]
+    if letra == "C":
+        return 0.25
+    if letra in ("D", "E"):
+        return 0.35
+    return None  # A, B: normalmente no obligatoria
+
+
+# Panel típico: ~1.7 m² (1.6 m x 1 m)
+AREA_PLACA_TIPICA_M2 = 1.7
+
+
+def _consumo_anual_desde_certificado(inv: dict) -> float | None:
+    """
+    Estima el consumo eléctrico anual (kWh) a partir del certificado energético (consumo)
+    y la superficie del inmueble. Usa CONSUMO_REFERENCIA_KWH_M2_POR_LETRA y m² útiles o construidos.
+    Devuelve None si no hay letra válida (A-G) o no hay superficie.
+    """
+    letra = (inv.get("certificado_consumo") or inv.get("certificado_energetico") or "").strip().upper()
+    if letra not in CONSUMO_REFERENCIA_KWH_M2_POR_LETRA:
+        return None
+    m2 = float(inv.get("m2_utiles", 0) or 0) or float(inv.get("m2_construidos", 0) or 0)
+    if m2 <= 0:
+        return None
+    kwh_m2 = CONSUMO_REFERENCIA_KWH_M2_POR_LETRA[letra]
+    return round(kwh_m2 * m2, 0)
+
+
+def calcular_placas_solares(
+    consumo_anual_kwh: float,
+    reduccion: float,
+    produccion_placa_kwh_ano: float,
+    area_placa_m2: float = AREA_PLACA_TIPICA_M2,
+) -> tuple[int, float]:
+    """
+    Calcula el número de placas solares necesarias para alcanzar la reducción energética dada.
+    Redondea al entero superior. También devuelve la superficie necesaria en m².
+
+    - consumo_anual_kwh: consumo eléctrico anual en kWh.
+    - reduccion: fracción de reducción (ej. 0.25 para 25 %).
+    - produccion_placa_kwh_ano: producción anual por placa en kWh/año.
+    - area_placa_m2: superficie por placa en m² (por defecto 1.7).
+
+    Returns:
+        (numero_placas, superficie_total_m2)
+    """
+    if produccion_placa_kwh_ano <= 0:
+        return (0, 0.0)
+    placas = (consumo_anual_kwh * reduccion) / produccion_placa_kwh_ano
+    numero_placas = max(0, int(math.ceil(placas)))
+    superficie_m2 = numero_placas * area_placa_m2
+    return (numero_placas, superficie_m2)
+
+
+def calcular_presupuesto_instalacion(
+    numero_placas: int,
+    costo_placa_eur: float,
+    area_placa_m2: float,
+    costo_instalacion_eur_m2: float,
+) -> float:
+    """
+    Calcula el presupuesto total de instalación de placas solares.
+
+    - numero_placas: número de placas.
+    - costo_placa_eur: coste por placa en €.
+    - area_placa_m2: superficie por placa en m².
+    - costo_instalacion_eur_m2: coste de instalación en €/m².
+
+    Returns:
+        Presupuesto total en €.
+    """
+    area_total = numero_placas * area_placa_m2
+    costo_placas = numero_placas * costo_placa_eur
+    costo_instalacion_total = area_total * costo_instalacion_eur_m2
+    return costo_placas + costo_instalacion_total
+
 
 # Categorías de inmuebles en la agenda (estilo: Interesados=verde, En Estudio=azul)
 CATEGORIA_INTERESADOS = "Interesados"
@@ -403,7 +518,7 @@ def _categoria_inmueble(inv: dict) -> str:
 
 
 def _titulo_inmueble(inv: dict, duracion_min: float | None = None) -> str:
-    """Título para listado y selector: localización — precio € — precio/m² (si hay m²) — XX min (si hay duración)."""
+    """Título para listado y selector: localización — precio € — precio/m² — XX min — ⚡ X m² (superficie placas si existe)."""
     loc = inv.get("localizacion", "") or "Sin ubicación"
     imp = float(inv.get("importe", 0) or 0)
     p = _precio_m2_inmueble(inv)
@@ -413,7 +528,45 @@ def _titulo_inmueble(inv: dict, duracion_min: float | None = None) -> str:
         base = f"{loc} — {imp:.0f} €"
     if duracion_min is not None:
         base += f" — {duracion_min:.0f} min."
+    sup_placas = float(inv.get("superficie_placas_m2", 0) or 0)
+    if sup_placas > 0:
+        base += f" — ⚡ {sup_placas:.0f} m²"
     return base
+
+
+def _leyenda_placas_subvencion(inv: dict) -> str | None:
+    """
+    Devuelve texto de leyenda para la ficha: superficie disponible, nº placas, reducción teórica y si podría acogerse a subvención.
+    Usa zona CTE (C/D/E), superficie_placas_m2, consumo desde certificado y AREA_PLACA_TIPICA_M2, produccion 510 kWh/placa.
+    None si no hay superficie para placas.
+    """
+    sup = float(inv.get("superficie_placas_m2", 0) or 0)
+    if sup <= 0:
+        return None
+    num_placas = int(sup / AREA_PLACA_TIPICA_M2)
+    if num_placas <= 0:
+        return f"⚡ Superficie disponible para placas: {sup:.0f} m² (insuficiente para una placa)."
+    consumo = _consumo_anual_desde_certificado(inv)
+    if consumo is None or consumo <= 0:
+        consumo = 5000.0
+    produccion_placa = 510.0
+    produccion_total = num_placas * produccion_placa
+    reduccion_teorica_pct = min(100.0, (produccion_total / consumo) * 100.0) if consumo else 0.0
+    zona = (inv.get("zona_climatica_cte") or "").strip().upper()[:1]
+    requerida_pct = None
+    if zona == "C":
+        requerida_pct = 25.0
+    elif zona in ("D", "E"):
+        requerida_pct = 35.0
+    if requerida_pct is not None:
+        apta = reduccion_teorica_pct >= requerida_pct
+        return (
+            f"⚡ **Superficie placas:** {sup:.0f} m² → hasta **{num_placas}** placas. "
+            f"Reducción teórica: **{reduccion_teorica_pct:.0f} %**. "
+            f"Subvención (zona {zona}) requiere ≥ **{requerida_pct:.0f} %**. "
+            f"**{'Apta' if apta else 'No apta'}** para subvención."
+        )
+    return f"⚡ **Superficie disponible para placas:** {sup:.0f} m² → hasta **{num_placas}** placas (reducción teórica **{reduccion_teorica_pct:.0f} %**)."
 
 
 def _geocode_nominatim(direccion: str) -> tuple[float, float] | None:
@@ -1260,6 +1413,7 @@ def _editor_inmueble(usuario_id: int, inv: dict):
         ano_construccion = st.number_input("Año construcción", min_value=1800, max_value=2030, value=int(inv.get("ano_construccion", 0) or 0), step=1, key=f"ei_ano_{inv_id}")
         m2_construidos = st.number_input("m² construidos", min_value=0.0, value=float(inv.get("m2_construidos", 0) or 0), step=1.0, key=f"ei_m2c_{inv_id}")
         m2_utiles = st.number_input("m² útiles", min_value=0.0, value=float(inv.get("m2_utiles", 0) or 0), step=1.0, key=f"ei_m2u_{inv_id}")
+        superficie_placas_m2 = st.number_input("Superficie disponible para placas solares (m²)", min_value=0.0, value=float(inv.get("superficie_placas_m2", 0) or 0), step=1.0, key=f"ei_sup_placas_{inv_id}", help="Superficie útil para instalar placas; sirve para estimar nº de placas y si podría acogerse a subvención.")
         habitaciones = st.number_input("Habitaciones", min_value=0, max_value=20, value=int(inv.get("habitaciones", 0) or 0), step=1, key=f"ei_hab_{inv_id}")
         banos = st.number_input("Baños", min_value=0, max_value=10, value=int(inv.get("banos", 0) or 0), step=1, key=f"ei_ban_{inv_id}")
         cert_legacy = inv.get("certificado_energetico") or "—"
@@ -1272,20 +1426,25 @@ def _editor_inmueble(usuario_id: int, inv: dict):
             certificado_consumo = st.selectbox("Cert. energético (consumo)", CERT_ENERGETICO_OPCIONES, index=idx_consumo, key=f"ei_cert_cons_{inv_id}")
         with col_cert2:
             certificado_emisiones = st.selectbox("Cert. energético (emisiones)", CERT_ENERGETICO_OPCIONES, index=idx_emisiones, key=f"ei_cert_emis_{inv_id}")
-        notas = st.text_area("Notas", value=inv.get("notas", "") or "", height=80, key=f"ei_notas_{inv_id}")
-        col1, col2, col3 = st.columns(3)
+        zona_cte_val = (inv.get("zona_climatica_cte") or "").strip() or "—"
+        idx_zona = ZONAS_CTE_OPCIONES.index(zona_cte_val) if zona_cte_val in ZONAS_CTE_OPCIONES else 0
+        zona_climatica_cte = st.selectbox("Zona climática CTE", ZONAS_CTE_OPCIONES, index=idx_zona, key=f"ei_zona_cte_{inv_id}", help="Clasificación según Código Técnico de la Edificación (ej. B3, C2).")
+        notas = st.text_area("Notas", value=inv.get("notas", "") or "", height=80, placeholder="Ej: oferta realizada, necesita reforma…", key=f"ei_notas_{inv_id}")
+        col1, col2, col3, col4 = st.columns(4)
         with col1:
             piscina = st.checkbox("Piscina", value=bool(inv.get("piscina", False)), key=f"ei_pis_{inv_id}")
         with col2:
             sotano = st.checkbox("Sótano", value=bool(inv.get("sotano", False)), key=f"ei_sot_{inv_id}")
         with col3:
+            placas_solares = st.checkbox("Placas solares", value=bool(inv.get("placas_solares", False)), key=f"ei_placas_{inv_id}")
+        with col4:
             inmobiliaria = st.checkbox("Venta por inmobiliaria", value=bool(inv.get("inmobiliaria", False)), key=f"ei_inm_{inv_id}")
         comision_venta_pct = st.number_input("% comisión venta (inmobiliaria)", min_value=0.0, max_value=20.0, value=float(inv.get("comision_venta_pct", 0) or 0), step=0.5, key=f"ei_com_{inv_id}")
         url_anuncio = st.text_input("URL del anuncio", value=inv.get("url_anuncio", "") or "", key=f"ei_url_{inv_id}")
         cat_actual = _categoria_inmueble(inv)
         categoria = st.radio("Categoría", CATEGORIAS_INMUEBLE, horizontal=True, index=CATEGORIAS_INMUEBLE.index(cat_actual) if cat_actual in CATEGORIAS_INMUEBLE else 0, key=f"ei_cat_{inv_id}")
         if st.form_submit_button("Guardar cambios"):
-            inv_act = {**inv, "importe": importe, "localizacion": localizacion, "ano_construccion": int(ano_construccion), "m2_construidos": m2_construidos, "m2_utiles": m2_utiles, "habitaciones": int(habitaciones), "banos": int(banos), "certificado_consumo": certificado_consumo if certificado_consumo != "—" else "", "certificado_emisiones": certificado_emisiones if certificado_emisiones != "—" else "", "notas": (notas or "").strip(), "piscina": piscina, "sotano": sotano, "inmobiliaria": inmobiliaria, "comision_venta_pct": comision_venta_pct, "url_anuncio": url_anuncio.strip(), "categoria": categoria}
+            inv_act = {**inv, "importe": importe, "localizacion": localizacion, "ano_construccion": int(ano_construccion), "m2_construidos": m2_construidos, "m2_utiles": m2_utiles, "superficie_placas_m2": float(superficie_placas_m2), "habitaciones": int(habitaciones), "banos": int(banos), "certificado_consumo": certificado_consumo if certificado_consumo != "—" else "", "certificado_emisiones": certificado_emisiones if certificado_emisiones != "—" else "", "zona_climatica_cte": zona_climatica_cte if zona_climatica_cte != "—" else "", "notas": (notas or "").strip(), "piscina": piscina, "sotano": sotano, "placas_solares": placas_solares, "inmobiliaria": inmobiliaria, "comision_venta_pct": comision_venta_pct, "url_anuncio": url_anuncio.strip(), "categoria": categoria}
             if ghd.actualizar_inmueble(usuario_id, inv_act):
                 st.success("Inmueble actualizado.")
                 st.rerun()
@@ -1312,6 +1471,7 @@ def agenda_inmuebles(usuario_id: int):
         ano_construccion = st.number_input("Año de construcción", min_value=1800, max_value=2030, value=2000, step=1)
         m2_construidos = st.number_input("m² construidos", min_value=0.0, value=90.0, step=1.0)
         m2_utiles = st.number_input("m² útiles", min_value=0.0, value=75.0, step=1.0)
+        superficie_placas_m2 = st.number_input("Superficie disponible para placas solares (m²)", min_value=0.0, value=0.0, step=1.0, help="Superficie útil para instalar placas; sirve para estimar nº de placas y si podría acogerse a subvención.")
         habitaciones = st.number_input("Habitaciones", min_value=0, max_value=20, value=3, step=1)
         banos = st.number_input("Baños", min_value=0, max_value=10, value=2, step=1)
         col_c1, col_c2 = st.columns(2)
@@ -1319,9 +1479,15 @@ def agenda_inmuebles(usuario_id: int):
             certificado_consumo = st.selectbox("Cert. energético (consumo)", CERT_ENERGETICO_OPCIONES)
         with col_c2:
             certificado_emisiones = st.selectbox("Cert. energético (emisiones)", CERT_ENERGETICO_OPCIONES)
-        notas = st.text_area("Notas", placeholder="Observaciones sobre la vivienda…", height=80)
-        piscina = st.checkbox("Piscina", value=False)
-        sotano = st.checkbox("Sótano", value=False)
+        zona_climatica_cte = st.selectbox("Zona climática CTE", ZONAS_CTE_OPCIONES, index=0, help="Clasificación según CTE (ej. B3, C2). Puedes rellenar desde el PDF de zonas por municipio.")
+        notas = st.text_area("Notas", placeholder="Ej: oferta realizada, necesita reforma, observaciones…", height=80)
+        col_ps, col_pi, col_so = st.columns(3)
+        with col_ps:
+            piscina = st.checkbox("Piscina", value=False)
+        with col_pi:
+            sotano = st.checkbox("Sótano", value=False)
+        with col_so:
+            placas_solares = st.checkbox("Placas solares", value=False)
         tipo_venta = st.radio("Tipo de venta", ["Particular", "Inmobiliaria"], horizontal=True)
         inmobiliaria = tipo_venta == "Inmobiliaria"
         comision_venta_pct = st.number_input("% comisión por la venta (solo inmobiliaria)", min_value=0.0, max_value=20.0, value=3.0, step=0.5)
@@ -1334,13 +1500,16 @@ def agenda_inmuebles(usuario_id: int):
                 "ano_construccion": int(ano_construccion),
                 "m2_construidos": float(m2_construidos),
                 "m2_utiles": float(m2_utiles),
+                "superficie_placas_m2": float(superficie_placas_m2),
                 "habitaciones": int(habitaciones),
                 "banos": int(banos),
                 "certificado_consumo": certificado_consumo if certificado_consumo != "—" else "",
                 "certificado_emisiones": certificado_emisiones if certificado_emisiones != "—" else "",
+                "zona_climatica_cte": zona_climatica_cte if zona_climatica_cte != "—" else "",
                 "notas": (notas or "").strip(),
                 "piscina": bool(piscina),
                 "sotano": bool(sotano),
+                "placas_solares": bool(placas_solares),
                 "inmobiliaria": bool(inmobiliaria),
                 "comision_venta_pct": float(comision_venta_pct) if inmobiliaria else 0.0,
                 "url_anuncio": (url_anuncio or "").strip(),
@@ -1367,6 +1536,7 @@ def agenda_inmuebles(usuario_id: int):
             "Categoría (Interesados → En Estudio)",
             "Piscina (sí primero)",
             "Sótano (sí primero)",
+            "Placas solares (sí primero)",
             "Habitaciones (más primero)",
             "m² útiles (mayor primero)",
             "€/m² (menor primero)",
@@ -1378,6 +1548,7 @@ def agenda_inmuebles(usuario_id: int):
         with f2:
             filtro_piscina = st.checkbox("Solo con piscina", key="filtro_piscina_inm")
             filtro_sotano = st.checkbox("Solo con sótano", key="filtro_sotano_inm")
+            filtro_placas_solares = st.checkbox("Solo con placas solares", key="filtro_placas_inm")
         with f3:
             orden_por = st.selectbox("Ordenar por", ord_opciones, key="orden_inm")
         if st.button("🔄 Calcular rutas a destino (GPS)", key="btn_calc_rutas"):
@@ -1395,6 +1566,8 @@ def agenda_inmuebles(usuario_id: int):
             lista = [inv for inv in lista if inv.get("piscina")]
         if filtro_sotano:
             lista = [inv for inv in lista if inv.get("sotano")]
+        if filtro_placas_solares:
+            lista = [inv for inv in lista if inv.get("placas_solares")]
         # Ordenar (Recientes: por fecha_creacion desc; si no hay fecha, por id desc)
         def _clave_recientes(inv):
             fc = inv.get("fecha_creacion") or ""
@@ -1411,6 +1584,8 @@ def agenda_inmuebles(usuario_id: int):
             lista = sorted(lista, key=lambda i: (not i.get("piscina"),))
         elif orden_por == "Sótano (sí primero)":
             lista = sorted(lista, key=lambda i: (not i.get("sotano"),))
+        elif orden_por == "Placas solares (sí primero)":
+            lista = sorted(lista, key=lambda i: (not i.get("placas_solares"),))
         elif orden_por == "Habitaciones (más primero)":
             lista = sorted(lista, key=lambda i: -(i.get("habitaciones") or 0))
         elif orden_por == "m² útiles (mayor primero)":
@@ -1458,9 +1633,53 @@ def agenda_inmuebles(usuario_id: int):
                     cert_consumo = inv.get("certificado_consumo") or inv.get("certificado_energetico") or "—"
                     cert_emisiones = inv.get("certificado_emisiones") or inv.get("certificado_energetico") or "—"
                     p_m2_str = f" · **{p_m2:.0f} €/m²**" if p_m2 is not None else ""
-                    st.caption(f"ID: {inv.get('id')} · m² útiles: {inv.get('m2_utiles')} · Año: {inv.get('ano_construccion')} · {hab or 0} hab. · {ban or 0} baños · Cert. consumo: {cert_consumo} · emisiones: {cert_emisiones}{p_m2_str}")
+                    extras = []
+                    if inv.get("piscina"):
+                        extras.append("Piscina")
+                    if inv.get("sotano"):
+                        extras.append("Sótano")
+                    if inv.get("placas_solares"):
+                        extras.append("Placas solares")
+                    extras_str = " · " + ", ".join(extras) if extras else ""
+                    zona_cte = (inv.get("zona_climatica_cte") or "").strip()
+                    zona_cte_str = f" · Zona climática CTE: **{zona_cte}**" if zona_cte else ""
+                    st.caption(f"ID: {inv.get('id')} · m² útiles: {inv.get('m2_utiles')} · Año: {inv.get('ano_construccion')} · {hab or 0} hab. · {ban or 0} baños · Cert. consumo: {cert_consumo} · emisiones: {cert_emisiones}{p_m2_str}{zona_cte_str}{extras_str}")
+                    if zona_cte:
+                        reduccion = _reduccion_subvencion_por_zona_cte(zona_cte)
+                        if reduccion:
+                            st.caption(f"📋 **Leyenda subvención:** {reduccion}")
+                    leyenda_placas = _leyenda_placas_subvencion(inv)
+                    if leyenda_placas:
+                        st.caption(leyenda_placas)
+                    if zona_cte:
+                        # Cálculo placas solares para alcanzar reducción mínima (solo zona C, D, E)
+                        reduccion_decimal = _reduccion_decimal_por_zona_cte(zona_cte)
+                        if reduccion_decimal is not None:
+                            with st.expander("☀️ Cálculo placas solares para subvención", expanded=False):
+                                st.caption("Estima el número de placas y la superficie necesaria para alcanzar la reducción energética mínima, y un presupuesto orientativo de instalación.")
+                                consumo_ref = _consumo_anual_desde_certificado(inv)
+                                valor_consumo = float(consumo_ref) if consumo_ref is not None else 5000.0
+                                c1, c2 = st.columns(2)
+                                with c1:
+                                    consumo_anual = st.number_input("Consumo eléctrico anual (kWh)", min_value=0.0, value=valor_consumo, step=500.0, key=f"placas_consumo_{inv_id}", help="Por defecto: estimado desde certificado energético (consumo) y m² del inmueble.")
+                                    if consumo_ref is not None:
+                                        cert_consumo = inv.get("certificado_consumo") or inv.get("certificado_energetico") or ""
+                                        m2 = float(inv.get("m2_utiles", 0) or 0) or float(inv.get("m2_construidos", 0) or 0)
+                                        st.caption(f"↳ Estimado: cert. consumo **{cert_consumo}** × {m2:.0f} m² ≈ **{consumo_ref:.0f}** kWh/año")
+                                    produccion_placa = st.number_input("Producción por placa (kWh/año)", min_value=1.0, value=510.0, step=10.0, key=f"placas_prod_{inv_id}")
+                                with c2:
+                                    area_placa = st.number_input("Superficie por placa (m²)", min_value=0.5, value=AREA_PLACA_TIPICA_M2, step=0.1, format="%.1f", key=f"placas_area_{inv_id}")
+                                num_placas, superficie_m2 = calcular_placas_solares(consumo_anual, reduccion_decimal, produccion_placa, area_placa)
+                                st.metric("Placas necesarias", num_placas)
+                                st.metric("Superficie necesaria", f"{superficie_m2:.1f} m²")
+                                st.markdown("---")
+                                st.caption("**Presupuesto orientativo**")
+                                cost_placa = st.number_input("Coste por placa (€)", min_value=0.0, value=250.0, step=25.0, key=f"placas_costo_placa_{inv_id}")
+                                cost_inst_m2 = st.number_input("Coste instalación (€/m²)", min_value=0.0, value=75.0, step=5.0, key=f"placas_costo_inst_{inv_id}")
+                                presupuesto = calcular_presupuesto_instalacion(num_placas, cost_placa, area_placa, cost_inst_m2)
+                                st.metric("Presupuesto total instalación", f"{presupuesto:.0f} €")
                     if inv.get("notas"):
-                        st.caption(f"📝 Notas: {inv.get('notas')}")
+                        st.caption(f"📝 **Notas:** {inv.get('notas')}")
                     d = _desglose_gastos_compra(inv)
                     st.caption(f"Coste total compra: **{d['total']:.0f} €** (precio + comisión + ITP {ITP_PCT}% + notaría + registro + gestoría {GESTORIA_EUR:.0f} €)")
                     if inv.get("url_anuncio"):
@@ -1561,6 +1780,72 @@ def agenda_inmuebles(usuario_id: int):
                     _editor_inmueble(usuario_id, inv)
     else:
         st.info("No hay inmuebles. Usa el formulario de arriba para dar de alta una vivienda.")
+
+
+def _tab_comparador_inmuebles(usuario_id: int):
+    """Pestaña Comparador de inmuebles: seleccionar varios y ver características en tabla."""
+    st.subheader("Comparador de inmuebles")
+    st.caption("Selecciona dos o más inmuebles para comparar sus características.")
+    inmuebles = ghd.get_inmuebles(usuario_id)
+    if not inmuebles:
+        st.info("No hay inmuebles. Ve a **Agenda inmuebles** para dar de alta viviendas.")
+        return
+    opts = [_titulo_inmueble(inv, _duracion_minutos_a_destino(inv, st.session_state.get("gps_destino", "Motril, Granada") or "Motril, Granada")) for inv in inmuebles]
+    seleccionados = st.multiselect(
+        "Inmuebles a comparar",
+        opts,
+        default=opts[:2] if len(opts) >= 2 else opts,
+        format_func=lambda x: x,
+    )
+    if len(seleccionados) < 2:
+        st.warning("Selecciona al menos dos inmuebles para comparar.")
+        return
+    indices = [opts.index(s) for s in seleccionados if s in opts]
+    elegidos = [inmuebles[i] for i in indices]
+    # Atributos a comparar (etiqueta -> valor por inmueble)
+    def _valor(inv: dict, clave: str, fmt=str):
+        v = inv.get(clave)
+        if v is None or v == "":
+            return "—"
+        return fmt(v) if fmt != str else str(v)
+
+    filas = [
+        ("Localización", lambda inv: _valor(inv, "localizacion")),
+        ("Precio (€)", lambda inv: _valor(inv, "importe", lambda x: f"{float(x):.0f}")),
+        ("m² construidos", lambda inv: _valor(inv, "m2_construidos", lambda x: f"{float(x):.0f}")),
+        ("m² útiles", lambda inv: _valor(inv, "m2_utiles", lambda x: f"{float(x):.0f}")),
+        ("€/m²", lambda inv: f"{_precio_m2_inmueble(inv):.0f}" if _precio_m2_inmueble(inv) is not None else "—"),
+        ("Habitaciones", lambda inv: _valor(inv, "habitaciones")),
+        ("Baños", lambda inv: _valor(inv, "banos")),
+        ("Año construcción", lambda inv: _valor(inv, "ano_construccion")),
+        ("Cert. consumo", lambda inv: inv.get("certificado_consumo") or inv.get("certificado_energetico") or "—"),
+        ("Cert. emisiones", lambda inv: inv.get("certificado_emisiones") or inv.get("certificado_energetico") or "—"),
+        ("Piscina", lambda inv: "Sí" if inv.get("piscina") else "No"),
+        ("Sótano", lambda inv: "Sí" if inv.get("sotano") else "No"),
+        ("Placas solares", lambda inv: "Sí" if inv.get("placas_solares") else "No"),
+        ("Coste total compra (€)", lambda inv: f"{_coste_total_inmueble(inv):.0f}"),
+        ("Zona climática CTE", lambda inv: (inv.get("zona_climatica_cte") or "").strip() or "—"),
+        ("⚡ Superficie placas (m²)", lambda inv: f"{float(inv.get('superficie_placas_m2') or 0):.0f}" if float(inv.get("superficie_placas_m2") or 0) > 0 else "—"),
+        ("Reducción energética mín. subvención", lambda inv: _reduccion_subvencion_por_zona_cte(inv.get("zona_climatica_cte") or "") or "—"),
+        ("Categoría", lambda inv: _categoria_inmueble(inv)),
+        ("Notas", lambda inv: (inv.get("notas") or "").strip() or "—"),
+    ]
+    # Tabla: columnas = inmuebles (título corto), filas = atributos
+    destino_gps = st.session_state.get("gps_destino", "Motril, Granada") or "Motril, Granada"
+    columnas_titulos = []
+    for inv in elegidos:
+        d_min = _duracion_minutos_a_destino(inv, destino_gps)
+        t = _titulo_inmueble(inv, d_min)
+        if len(t) > 50:
+            t = t[:47] + "..."
+        columnas_titulos.append(t)
+    data = {}
+    for i, inv in enumerate(elegidos):
+        col_name = columnas_titulos[i] if i < len(columnas_titulos) else f"Inmueble {i+1}"
+        data[col_name] = [fn(inv) for _, fn in filas]
+    df = pd.DataFrame(data, index=[nombre for nombre, _ in filas])
+    st.dataframe(df, use_container_width=True, height=min(500, 50 + len(filas) * 35))
+    st.caption("Coste total compra incluye precio + comisión (si inmobiliaria) + ITP 7% + notaría + registro + gestoría.")
 
 
 def _tab_amortizar_o_invertir(usuario_id: int):
@@ -2081,7 +2366,7 @@ def main():
     st.sidebar.markdown("---")
     st.sidebar.caption(f"**Hipochorro** v{VERSION_APP}")
 
-    tab1, tab2, tab3, tab4, tab5 = st.tabs(["Alta de hipotecas", "Comparador", "Agenda inmuebles", "¿Amortizar o Invertir?", "Info"])
+    tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs(["Alta de hipotecas", "Comparador", "Agenda inmuebles", "Comparador inmuebles", "¿Amortizar o Invertir?", "Info"])
     with tab1:
         formulario_hipoteca(u["id"])
         st.markdown("---")
@@ -2106,9 +2391,12 @@ def main():
         agenda_inmuebles(u["id"])
 
     with tab4:
-        _tab_amortizar_o_invertir(u["id"])
+        _tab_comparador_inmuebles(u["id"])
 
     with tab5:
+        _tab_amortizar_o_invertir(u["id"])
+
+    with tab6:
         st.markdown("""
         **Hipochorro** guarda usuarios e hipotecas en el repositorio GitHub **jarconett/hipochorro**.
         - En **Streamlit Cloud** configura el secret `GITHUB_TOKEN` con un token de acceso al repo (con permisos de escritura).
@@ -2133,7 +2421,7 @@ def main():
         - **1.0.0** — Versión base: usuarios e hipotecas en GitHub, logos por dominio, comparador por TAE y coste primer año, cuadro de amortización sistema francés con amortización extraordinaria.
         """)
 
-    # Ocultar bloque de login duplicado que aparece al hacer scroll (script en iframe accede al DOM padre)
+    # Ocultar bloque de login duplicado (script en iframe)
     _ocultar_login_duplicado_en_scroll()
 
 
