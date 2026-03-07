@@ -402,7 +402,7 @@ def _obtener_imagenes_idealista_zenrows(url_anuncio: str, property_id: str, api_
     """Obtiene URLs de imágenes de un anuncio Idealista vía API ZenRows. Requiere ZENROWS_API_KEY."""
     try:
         endpoint = f"https://realestate.api.zenrows.com/v1/targets/idealista/properties/{property_id}"
-        r = requests.get(endpoint, params={"apikey": api_key, "url": url_anuncio}, headers=_REQUEST_HEADERS, timeout=25)
+        r = requests.get(endpoint, params={"apikey": api_key, "url": url_anuncio}, headers=_REQUEST_HEADERS, timeout=15)
         if r.status_code != 200:
             return []
         data = r.json()
@@ -476,10 +476,10 @@ def extraer_urls_imagenes_anuncio(url_anuncio: str, max_urls: int = 50) -> list:
         urls = _obtener_imagenes_idealista_apify(url_anuncio, apify_token)
         if urls:
             return urls[:max_urls]
-    # Opción 3: Scraping directo del HTML
+    # Opción 3: Scraping directo del HTML (timeout corto para no bloquear la UI)
     try:
         from bs4 import BeautifulSoup
-        r = requests.get(url_anuncio, headers=_REQUEST_HEADERS, timeout=20)
+        r = requests.get(url_anuncio, headers=_REQUEST_HEADERS, timeout=12)
         html = r.text
         # Si 403 o 401, intentar parsear solo si el cuerpo parece una página completa (p. ej. algunos CDN)
         if r.status_code not in (200, 201) and (len(html) < 5000 or "idealista" not in html.lower()):
@@ -533,6 +533,16 @@ def extraer_urls_imagenes_anuncio(url_anuncio: str, max_urls: int = 50) -> list:
             if ".jpg" in s or ".jpeg" in s or ".png" in s or ".webp" in s:
                 seen.add(src)
                 urls.append(src)
+
+        # 4) Cualquier URL de imagen en el HTML (p. ej. webs inmobiliarias con fotos en script o data-*)
+        patron_cualquier_imagen = re.compile(
+            r'https?://[^"\'<>\s]+\.(?:jpg|jpeg|png|webp)(?:\?[^"\'<>\s]*)?', re.I
+        )
+        for m in patron_cualquier_imagen.finditer(html):
+            u = m.group(0)
+            if u not in seen and _normalizar_url_imagen(u):
+                seen.add(u)
+                urls.append(u)
 
         # Orden estable y límite
         return list(dict.fromkeys(urls))[:max_urls]
@@ -1858,14 +1868,15 @@ def agenda_inmuebles(usuario_id: int):
                         if st.button("🖼 Obtener / Recargar imágenes", key=f"btn_obt_fotos_{inv_id}", help="Extrae imágenes del anuncio Idealista y/o de la URL de la inmobiliaria. Selecciona luego las que quieras añadir a la ficha."):
                             try:
                                 todas_urls = []
-                                if inv.get("url_anuncio"):
-                                    with st.spinner("Extrayendo imágenes del anuncio Idealista…"):
-                                        u1 = extraer_urls_imagenes_anuncio(inv["url_anuncio"])
-                                        todas_urls.extend(u1)
+                                # Primero URL inmobiliaria (suele responder más rápido que Idealista)
                                 if inv.get("url_inmobiliaria"):
                                     with st.spinner("Extrayendo imágenes de la web inmobiliaria…"):
                                         u2 = extraer_urls_imagenes_anuncio(inv["url_inmobiliaria"])
                                         todas_urls.extend(u2)
+                                if inv.get("url_anuncio"):
+                                    with st.spinner("Extrayendo imágenes del anuncio Idealista…"):
+                                        u1 = extraer_urls_imagenes_anuncio(inv["url_anuncio"])
+                                        todas_urls.extend(u1)
                                 urls = list(dict.fromkeys(todas_urls))
                                 if urls:
                                     st.session_state.fotos_extraidas = {"inmueble_id": inv_id, "urls": urls}
