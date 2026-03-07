@@ -22,7 +22,10 @@ from urllib.parse import urljoin, urlparse
 
 from lib import github_data as ghd
 from lib import amortizacion as am
-from lib import zonas_climaticas_cte as zcte
+try:
+    from lib import zonas_climaticas_cte as zcte
+except ImportError:
+    zcte = None
 
 try:
     from PIL import Image
@@ -81,7 +84,7 @@ CONSUMO_REFERENCIA_KWH_M2_POR_LETRA = {
 }
 
 # Zona climática CTE (Código Técnico de la Edificación): opciones para selectbox
-ZONAS_CTE_OPCIONES = zcte.get_opciones_zona()
+ZONAS_CTE_OPCIONES = (zcte.get_opciones_zona() if zcte else ["—"] + [f"{l}{n}" for l in "ABCDE" for n in "1234"])
 
 # Reducción mínima demanda térmica para subvención según zona CTE (letra A–E)
 # A y B: normalmente no obligatoria; C: ≥ 25 %; D y E: ≥ 35 %
