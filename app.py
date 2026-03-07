@@ -53,7 +53,7 @@ HELP_TAE = (
 APIFY_TOKEN_SECRET = "APIFY_TOKEN_SECRET"
 
 # Versión de la aplicación (visible en sidebar y changelog)
-VERSION_APP = "1.9.0"
+VERSION_APP = "1.10.0"
 
 # Gastos de compra (sobre precio de la vivienda / ITP)
 ITP_PCT = 7.0           # Impuesto de Transmisiones Patrimoniales: % sobre precio vivienda
@@ -89,10 +89,38 @@ _favicon_img = _cargar_imagen(FAVICON_PATH)
 
 # Configuración de página (favicon)
 st.set_page_config(
-    page_title="Hipo-Cachorro - Comparador de Hipotecas",
+    page_title="Hipochorro - Comparador de Hipotecas",
     page_icon=_favicon_img if _favicon_img is not None else "🏠",
     layout="wide",
     initial_sidebar_state="expanded",
+)
+
+# CSS global: aspecto profesional (espaciado, cards, accesibilidad)
+# Inspirado en web-design-guidelines: focus visible, tipografía, contraste
+st.markdown(
+    """
+    <style>
+    /* Contenedor principal: padding y lectura cómoda */
+    .block-container { padding-top: 1.5rem; padding-bottom: 2rem; max-width: 100%; }
+    /* Encabezados: jerarquía clara y espacio */
+    h1, h2, h3 { font-weight: 600; margin-top: 1.25em; margin-bottom: 0.5em; }
+    h1 { font-size: 1.75rem; border-bottom: 2px solid var(--primary-color, #0d47a1); padding-bottom: 0.35rem; }
+    /* Expanders tipo card: sombra sutil y borde redondeado */
+    [data-testid="stExpander"] { border-radius: 0.5rem; box-shadow: 0 1px 3px rgba(0,0,0,0.06); border: 1px solid rgba(0,0,0,0.06); }
+    /* Accesibilidad: anillo de foco visible (nunca outline: none sin reemplazo) */
+    button:focus-visible, [data-testid="stSelectbox"]:focus-within { outline: 2px solid var(--primary-color, #0d47a1); outline-offset: 2px; }
+    /* Métricas y números: tabular-nums para alineación */
+    [data-testid="stMetricValue"] { font-variant-numeric: tabular-nums; }
+    /* Sidebar: separación visual */
+    [data-testid="stSidebar"] { border-right: 1px solid rgba(0,0,0,0.08); }
+    /* Botones primarios: más contraste */
+    .stButton > button { font-weight: 500; border-radius: 0.5rem; }
+    /* Tabs: indicador más claro */
+    .stTabs [data-baseweb="tab-list"] { gap: 0.25rem; }
+    .stTabs [data-baseweb="tab"] { padding: 0.5rem 1rem; border-radius: 0.5rem; }
+    </style>
+    """,
+    unsafe_allow_html=True,
 )
 
 # Estado de sesión
@@ -2060,6 +2088,7 @@ def main():
         st.subheader("Changelog")
         st.markdown(f"**Versión actual: {VERSION_APP}**")
         st.markdown("""
+        - **1.10.0** — Rediseño UI: tema profesional en `.streamlit/config.toml` (colores claro/oscuro, Plus Jakarta Sans), CSS global (espaciado, expanders tipo card, focus visible, tabular-nums en métricas).
         - **1.9.0** — Nueva pestaña «¿Amortizar o Invertir?»: selección de hipoteca, importe de amortización anual, comisiones bonificadas o estándar; comparativa con depósito/fondo (dinero invertido y % rendimiento o importe obtenido); retención por rentas del ahorro (tramos España 19–26 %); comparativa visual amortizar vs invertir.
         - **1.8.0** — Sección GPS en sidebar: ciudad de destino (por defecto Motril, Granada) para rutas por carretera; duración en minutos como criterio de ordenación en la agenda; botón «Calcular rutas a destino». Visor de mapa en cada ficha de inmueble (Folium): pin para comprobar geocodificación, clic en el mapa para recolocar el pin, botón «Guardar coordenadas» para persistir lat/lon en la ficha.
         - **1.7.0** — Agenda de inmuebles: categorías Interesados / En Estudio (estilo verde/azul); filtros por categoría, piscina y sótano; ordenar por recientes (fecha creación), precio, categoría, piscina, sótano, habitaciones, m² o €/m²; miniatura de la foto en la línea del desplegable; fecha de creación al dar de alta.

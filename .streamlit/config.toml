@@ -1,5 +1,39 @@
+# Hipochorro — Tema profesional (finanzas / comparador hipotecas)
+# Inspirado en guías de diseño: accesibilidad, tipografía clara, contraste
+
 [server]
 headless = true
 
 [browser]
 gatherUsageStats = false
+
+[theme]
+base = "light"
+# Tipografía: Plus Jakarta Sans (Google Fonts) — moderna y legible
+font = "Plus Jakarta Sans:https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap"
+headingFont = "Plus Jakarta Sans:https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@600;700&display=swap"
+# Tamaño y peso base
+baseFontSize = "16px"
+baseFontWeight = "400"
+# Bordes suaves
+borderRadius = "0.5rem"
+widgetBorderRadius = "0.5rem"
+
+[theme.light]
+primaryColor = "#0d47a1"
+backgroundColor = "#f8fafc"
+secondaryBackgroundColor = "#ffffff"
+textColor = "#1e293b"
+# Bordes discretos
+borderColor = "#e2e8f0"
+widgetBorderColor = "#e2e8f0"
+sidebarBorderColor = "#e2e8f0"
+
+[theme.dark]
+primaryColor = "#64b5f6"
+backgroundColor = "#0f172a"
+secondaryBackgroundColor = "#1e293b"
+textColor = "#f1f5f9"
+borderColor = "#334155"
+widgetBorderColor = "#334155"
+sidebarBorderColor = "#334155"
