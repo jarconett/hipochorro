@@ -25,7 +25,8 @@
       "consumo_exacto_kwh_m2": 185.0,
       "emisiones_exactas_kg_m2": 34.0,
       "url_inmobiliaria": "https://www.alvarezsalmeron.com/ficha-inmueble.asp?c=25966&cod_ofer=28104676&numagencia=6542",
-      "valoracion": 286000.0
+      "valoracion": 286000.0,
+      "horas_luz_anual": true
     }
   ]
 }
