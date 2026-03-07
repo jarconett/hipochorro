@@ -693,6 +693,24 @@ def _parse_sunlight_json(uploaded_file) -> dict | None:
         return None
 
 
+def _parse_sunlight_json_str(texto: str) -> dict | None:
+    """Parsea JSON de horas de luz desde string (ej. texto pegado). Misma validación que _parse_sunlight_json."""
+    if not (texto or "").strip():
+        return None
+    try:
+        data = json.loads(texto)
+        if not isinstance(data, dict):
+            return None
+        arr = data.get("minutesOfDirectSunPerDay")
+        if not isinstance(arr, list) or len(arr) not in (365, 366):
+            return None
+        if not all(isinstance(x, (int, float)) for x in arr):
+            return None
+        return data
+    except (json.JSONDecodeError, TypeError):
+        return None
+
+
 def _leyenda_placas_subvencion(inv: dict) -> str | None:
     """
     Devuelve texto de leyenda para la ficha: superficie disponible, nº placas, reducción teórica y si podría acogerse a subvención.
@@ -1663,18 +1681,19 @@ def _editor_inmueble(usuario_id: int, inv: dict):
                 st.rerun()
             else:
                 st.error("Error al guardar.")
-    st.caption("**Horas de luz anuales:** sube el JSON aquí (fuera del formulario para evitar fallo de conexión). Luego pulsa **Guardar cambios** arriba.")
-    upload_sunlight = st.file_uploader("Archivo JSON horas de sol", type=["json"], key=f"ei_sun_{inv_id}", help="minutesOfDirectSunPerDay (365/366 valores).")
-    if upload_sunlight:
-        parsed_sun = _parse_sunlight_json(upload_sunlight)
+    st.caption("**Horas de luz anuales:** en Streamlit Cloud la subida de archivos suele dar «Connection lost». **Pega aquí el contenido** de tu `annual-sunlight.json` (abre el archivo en un editor, copia todo, pega abajo) y pulsa el botón. Luego **Guardar cambios** arriba.")
+    sunlight_paste = st.text_area("Contenido JSON (pegar aquí)", value="", height=120, key=f"ei_sun_paste_{inv_id}", placeholder='{"minutesOfDirectSunPerDay": [512, 513, ...], "minutesOfDirectSunPerYear": 211986, ...}', help="Pega el JSON completo del archivo de exposición solar.")
+    if st.button("Usar JSON pegado como datos de sol", key=f"ei_sun_btn_{inv_id}"):
+        parsed_sun = _parse_sunlight_json_str(sunlight_paste or "")
         if parsed_sun:
             st.session_state["pending_sunlight_data"] = parsed_sun
             st.session_state["pending_sunlight_inv_id"] = inv_id
-            st.success("Archivo cargado en memoria. Pulsa **Guardar cambios** (arriba) para subirlo al servidor.")
+            st.success("JSON válido. Pulsa **Guardar cambios** (arriba) para subirlo al servidor.")
+            st.rerun()
         else:
-            st.warning("El JSON no tiene el formato esperado (minutesOfDirectSunPerDay con 365/366 valores).")
-    if st.session_state.get("pending_sunlight_inv_id") == inv_id and not upload_sunlight:
-        st.info("Tienes un archivo de sol pendiente. Pulsa **Guardar cambios** en el formulario de arriba.")
+            st.error("El texto no es un JSON válido con minutesOfDirectSunPerDay (array de 365 o 366 números). Revisa y pega de nuevo.")
+    if st.session_state.get("pending_sunlight_inv_id") == inv_id:
+        st.info("Tienes datos de sol pendientes de subir. Pulsa **Guardar cambios** en el formulario de arriba.")
     if st.button("Eliminar inmueble", key=f"del_inv_{inv_id}"):
         inmuebles = [x for x in ghd.get_inmuebles(usuario_id) if x.get("id") != inv_id]
         if ghd.guardar_inmuebles(usuario_id, inmuebles):
@@ -1727,8 +1746,8 @@ def agenda_inmuebles(usuario_id: int):
         url_anuncio = st.text_input("URL del anuncio Idealista", placeholder="https://www.idealista.com/...")
         url_inmobiliaria = st.text_input("URL inmobiliaria", placeholder="https://...", help="Web de la inmobiliaria con el anuncio; suele permitir listar las imágenes con más facilidad.")
         categoria = st.radio("Categoría", CATEGORIAS_INMUEBLE, horizontal=True, index=0)
-        st.caption("Horas de luz anuales (opcional): sube un JSON con minutos de sol por día (ej. annual-sunlight.json).")
-        sunlight_file_alta = st.file_uploader("Archivo JSON horas de sol", type=["json"], key="alta_sunlight_json", help="Estructura: minutesOfDirectSunPerDay (array 365/366), minutesOfDirectSunPerYear.")
+        st.caption("Horas de luz anuales (opcional): pega aquí el contenido de annual-sunlight.json (la subida de archivo suele fallar en la nube).")
+        sunlight_paste_alta = st.text_area("JSON horas de sol (pegar)", value="", height=100, key="alta_sunlight_paste", placeholder='{"minutesOfDirectSunPerDay": [...], ...}')
         if st.form_submit_button("Dar de alta inmueble"):
             cert_consumo_alta = _letra_desde_consumo_kwh_m2(consumo_exacto_alta) if consumo_exacto_alta > 0 else (certificado_consumo if certificado_consumo != "—" else "")
             cert_emisiones_alta = _letra_desde_emisiones_kg_m2(emisiones_exactas_alta) if emisiones_exactas_alta > 0 else (certificado_emisiones if certificado_emisiones != "—" else "")
@@ -1760,10 +1779,9 @@ def agenda_inmuebles(usuario_id: int):
             }
             nuevo = ghd.añadir_inmueble(usuario_id, inv)
             if nuevo:
-                if sunlight_file_alta:
-                    parsed_sun = _parse_sunlight_json(sunlight_file_alta)
-                    if parsed_sun and ghd.guardar_sunlight_inmueble(usuario_id, nuevo["id"], parsed_sun):
-                        ghd.actualizar_inmueble(usuario_id, {**nuevo, "horas_luz_anual": True})
+                parsed_sun = _parse_sunlight_json_str((sunlight_paste_alta or "").strip()) if (sunlight_paste_alta or "").strip() else None
+                if parsed_sun and ghd.guardar_sunlight_inmueble(usuario_id, nuevo["id"], parsed_sun):
+                    ghd.actualizar_inmueble(usuario_id, {**nuevo, "horas_luz_anual": True})
                 st.success("Inmueble dado de alta. Abre su ficha y usa «Obtener / Recargar imágenes» para elegir las fotos desde Idealista y/o la web de la inmobiliaria.")
                 st.rerun()
             else:
