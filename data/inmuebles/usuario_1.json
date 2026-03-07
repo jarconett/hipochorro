@@ -53,7 +53,8 @@
       "url_inmobiliaria": "www.webparainmobiliarias.com.es/frame-clientes/11366/imprimirfichapropiedad.php?voyimprimir=1&datoofe=27776651.11366",
       "categoria": "Interesados",
       "fecha_creacion": "2026-03-07T23:08:52.643663",
-      "id": 2
+      "id": 2,
+      "horas_luz_anual": true
     }
   ]
 }
