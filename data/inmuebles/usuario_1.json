@@ -1,7 +1,7 @@
 {
   "inmuebles": [
     {
-      "importe": 285000.0,
+      "importe": 290000.0,
       "localizacion": "calle Alhelí, 28 , El Chaparral , Albolote ,Granada",
       "ano_construccion": 2008,
       "m2_construidos": 248.0,
@@ -24,7 +24,8 @@
       "id": 1,
       "consumo_exacto_kwh_m2": 185.0,
       "emisiones_exactas_kg_m2": 34.0,
-      "url_inmobiliaria": "https://www.alvarezsalmeron.com/ficha-inmueble.asp?c=25966&cod_ofer=28104676&numagencia=6542"
+      "url_inmobiliaria": "https://www.alvarezsalmeron.com/ficha-inmueble.asp?c=25966&cod_ofer=28104676&numagencia=6542",
+      "valoracion": 286000.0
     }
   ]
 }
