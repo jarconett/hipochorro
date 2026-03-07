@@ -53,7 +53,7 @@ HELP_TAE = (
 APIFY_TOKEN_SECRET = "APIFY_TOKEN_SECRET"
 
 # Versión de la aplicación (visible en sidebar y changelog)
-VERSION_APP = "1.8.0"
+VERSION_APP = "1.9.0"
 
 # Gastos de compra (sobre precio de la vivienda / ITP)
 ITP_PCT = 7.0           # Impuesto de Transmisiones Patrimoniales: % sobre precio vivienda
@@ -68,6 +68,10 @@ CERT_ENERGETICO_OPCIONES = ["—", "A", "B", "C", "D", "E", "F", "G", "En trámi
 CATEGORIA_INTERESADOS = "Interesados"
 CATEGORIA_EN_ESTUDIO = "En Estudio"
 CATEGORIAS_INMUEBLE = [CATEGORIA_INTERESADOS, CATEGORIA_EN_ESTUDIO]
+
+# Tramos retención rentas del ahorro (España): base imponible → tipo aplicable
+# Hasta 6.000 € → 19%; 6.000-50.000 → 21%; 50.000-200.000 → 23%; >200.000 → 26%
+TRAMOS_RETENCION_AHORRO = [(6_000, 0.19), (50_000, 0.21), (200_000, 0.23), (float("inf"), 0.26)]
 
 
 def _cargar_imagen(path: Path):
@@ -1035,6 +1039,70 @@ def _duracion_str(meses: int) -> str:
     return f"{a} años {m} meses"
 
 
+def _retencion_ahorro(rendimiento_bruto: float) -> float:
+    """Retención sobre rendimientos del ahorro (tramos España). Devuelve el importe a pagar."""
+    if rendimiento_bruto <= 0:
+        return 0.0
+    base = float(rendimiento_bruto)
+    impuesto = 0.0
+    limite_anterior = 0.0
+    for limite, tipo in TRAMOS_RETENCION_AHORRO:
+        tramo = min(base, limite) - limite_anterior
+        if tramo > 0:
+            impuesto += tramo * tipo
+        if base <= limite:
+            break
+        limite_anterior = limite
+    return round(impuesto, 2)
+
+
+def _ahorro_amortizar(
+    h: dict,
+    importe_amort_anual: float,
+) -> tuple[float, float, float]:
+    """
+    Calcula ahorro neto por amortizar: intereses evitados - comisiones por amortización.
+    Tiene en cuenta comisión bonificada (años bonif) vs estándar.
+    Devuelve (intereses_ahorrados, comisiones_totales, ahorro_neto).
+    """
+    if importe_amort_anual <= 0:
+        return (0.0, 0.0, 0.0)
+    capital = float(h.get("cantidad_solicitada", 0) or 0)
+    anos = int(h.get("duracion_anos", 0) or 0)
+    if capital <= 0 or anos <= 0:
+        return (0.0, 0.0, 0.0)
+    tin_base = _get_tin_base(h)
+    plan_tin_anual = get_plan_tin_anual(h, anos)
+    tin_efectivo = float(plan_tin_anual[0]) if plan_tin_anual else tin_base
+    anos_bonif = int(h.get("anos_bonif_amort_parcial", 0) or 0)
+    comision_bonif = float(h.get("comision_amort_parcial_bonif", 0) or 0)
+    comision_estandar = float(h.get("comision_amort_parcial", 0) or 0)
+
+    cuadro_sin = am.cuadro_amortizacion_anual(
+        capital, tin_efectivo, anos, 0.0,
+        plan_tin_anual=plan_tin_anual,
+    )
+    cuadro_con = am.cuadro_amortizacion_anual(
+        capital, tin_efectivo, anos, importe_amort_anual,
+        plan_tin_anual=plan_tin_anual,
+    )
+    intereses_sin = sum(r.get("intereses_año", 0) for r in cuadro_sin)
+    intereses_con = sum(r.get("intereses_año", 0) for r in cuadro_con)
+    intereses_ahorrados = intereses_sin - intereses_con
+
+    comisiones_totales = 0.0
+    for i, fila in enumerate(cuadro_con):
+        extra = float(fila.get("extra_año", 0) or 0)
+        if extra <= 0:
+            continue
+        ano = i + 1
+        pct = comision_bonif if (anos_bonif and ano <= anos_bonif) else comision_estandar
+        comisiones_totales += extra * (pct / 100.0)
+
+    ahorro_neto = intereses_ahorrados - comisiones_totales
+    return (round(intereses_ahorrados, 2), round(comisiones_totales, 2), round(ahorro_neto, 2))
+
+
 def _resumen_costes_hipoteca(
     h: dict,
     amort_anual: float,
@@ -1437,6 +1505,76 @@ def agenda_inmuebles(usuario_id: int):
                     _editor_inmueble(usuario_id, inv)
     else:
         st.info("No hay inmuebles. Usa el formulario de arriba para dar de alta una vivienda.")
+
+
+def _tab_amortizar_o_invertir(usuario_id: int):
+    """Pestaña ¿Amortizar o Invertir?: compara ahorro por amortización (con comisiones) vs beneficio neto de inversión (con retención)."""
+    hipotecas = ghd.get_hipotecas(usuario_id)
+    if not hipotecas:
+        st.info("No hay hipotecas dadas de alta. Ve a **Alta de hipotecas** para añadir al menos una.")
+        return
+    st.subheader("¿Amortizar o Invertir?")
+    st.caption("Compara el ahorro neto por amortizar (intereses evitados menos comisiones) con el beneficio neto de invertir (después de retención por rentas del ahorro).")
+    opts_hipo = [f"{h.get('nombre_entidad', '')} — {h.get('nombre_hipoteca', '')}" for h in hipotecas]
+    sel_hipo = st.selectbox("Selecciona la hipoteca", opts_hipo, key="amort_inv_hipo")
+    idx_hipo = opts_hipo.index(sel_hipo) if sel_hipo in opts_hipo else 0
+    h = hipotecas[idx_hipo]
+    importe_amort = st.number_input(
+        "Importe amortización anual (€)",
+        min_value=0.0,
+        value=3000.0,
+        step=500.0,
+        key="amort_inv_importe",
+        help="Cantidad que destinarías cada año a amortizar.",
+    )
+    st.markdown("---")
+    st.markdown("**Inversión alternativa** (depósito o fondo)")
+    dinero_invertido = st.number_input("Dinero invertido (€)", min_value=0.0, value=3000.0, step=500.0, key="amort_inv_capital")
+    modo_rendimiento = st.radio(
+        "Indicar rendimiento como",
+        ["% de rendimiento", "Importe obtenido (total al vencimiento)"],
+        horizontal=True,
+        key="amort_inv_modo",
+    )
+    if modo_rendimiento == "% de rendimiento":
+        pct_rendimiento = st.number_input("% rendimiento", min_value=0.0, max_value=100.0, value=3.0, step=0.25, format="%.2f", key="amort_inv_pct")
+        rendimiento_bruto = dinero_invertido * (pct_rendimiento / 100.0) if dinero_invertido else 0.0
+    else:
+        importe_obtenido = st.number_input("Importe obtenido (€)", min_value=0.0, value=3090.0, step=50.0, key="amort_inv_obtenido")
+        rendimiento_bruto = max(0.0, float(importe_obtenido) - dinero_invertido) if dinero_invertido else 0.0
+
+    # Cálculo amortización
+    intereses_ahorrados, comisiones_totales, ahorro_neto_amort = _ahorro_amortizar(h, importe_amort)
+    # Cálculo inversión
+    retencion = _retencion_ahorro(rendimiento_bruto)
+    beneficio_neto_inv = round(rendimiento_bruto - retencion, 2)
+
+    col_amort, col_inv = st.columns(2)
+    with col_amort:
+        st.markdown("### 📉 Amortizar")
+        st.metric("Intereses ahorrados (vida préstamo)", f"{intereses_ahorrados:,.0f} €")
+        st.metric("Comisiones por amortización", f"{comisiones_totales:,.0f} €")
+        st.metric("**Ahorro neto**", f"**{ahorro_neto_amort:,.0f} €**")
+    with col_inv:
+        st.markdown("### 📈 Invertir")
+        st.metric("Rendimiento bruto", f"{rendimiento_bruto:,.0f} €")
+        st.metric("Retención (rentas ahorro)", f"{retencion:,.0f} €")
+        st.metric("**Beneficio neto**", f"**{beneficio_neto_inv:,.0f} €**")
+
+    st.markdown("---")
+    if ahorro_neto_amort > beneficio_neto_inv:
+        st.success(f"**En estos datos, sale a cuenta amortizar:** ahorro neto {ahorro_neto_amort:,.0f} € frente a beneficio neto por invertir {beneficio_neto_inv:,.0f} €.")
+    elif beneficio_neto_inv > ahorro_neto_amort:
+        st.success(f"**En estos datos, sale a cuenta invertir:** beneficio neto {beneficio_neto_inv:,.0f} € frente a ahorro por amortizar {ahorro_neto_amort:,.0f} €.")
+    else:
+        st.info("Ambas opciones dan un resultado equivalente con los datos introducidos.")
+    st.markdown("**Comparativa visual**")
+    df_comp = pd.DataFrame(
+        {"Neto (€)": [ahorro_neto_amort, beneficio_neto_inv]},
+        index=["Amortizar", "Invertir"],
+    )
+    st.bar_chart(df_comp, height=280)
+    st.caption("Amortizar: ahorro total en vida del préstamo (intereses evitados − comisiones). Invertir: beneficio neto con los datos introducidos (después de retención).")
 
 
 def comparador(usuario_id: int):
@@ -1883,7 +2021,7 @@ def main():
     st.sidebar.markdown("---")
     st.sidebar.caption(f"**Hipochorro** v{VERSION_APP}")
 
-    tab1, tab2, tab3, tab4 = st.tabs(["Alta de hipotecas", "Comparador", "Agenda inmuebles", "Info"])
+    tab1, tab2, tab3, tab4, tab5 = st.tabs(["Alta de hipotecas", "Comparador", "Agenda inmuebles", "¿Amortizar o Invertir?", "Info"])
     with tab1:
         formulario_hipoteca(u["id"])
         st.markdown("---")
@@ -1908,6 +2046,9 @@ def main():
         agenda_inmuebles(u["id"])
 
     with tab4:
+        _tab_amortizar_o_invertir(u["id"])
+
+    with tab5:
         st.markdown("""
         **Hipochorro** guarda usuarios e hipotecas en el repositorio GitHub **jarconett/hipochorro**.
         - En **Streamlit Cloud** configura el secret `GITHUB_TOKEN` con un token de acceso al repo (con permisos de escritura).
@@ -1919,6 +2060,7 @@ def main():
         st.subheader("Changelog")
         st.markdown(f"**Versión actual: {VERSION_APP}**")
         st.markdown("""
+        - **1.9.0** — Nueva pestaña «¿Amortizar o Invertir?»: selección de hipoteca, importe de amortización anual, comisiones bonificadas o estándar; comparativa con depósito/fondo (dinero invertido y % rendimiento o importe obtenido); retención por rentas del ahorro (tramos España 19–26 %); comparativa visual amortizar vs invertir.
         - **1.8.0** — Sección GPS en sidebar: ciudad de destino (por defecto Motril, Granada) para rutas por carretera; duración en minutos como criterio de ordenación en la agenda; botón «Calcular rutas a destino». Visor de mapa en cada ficha de inmueble (Folium): pin para comprobar geocodificación, clic en el mapa para recolocar el pin, botón «Guardar coordenadas» para persistir lat/lon en la ficha.
         - **1.7.0** — Agenda de inmuebles: categorías Interesados / En Estudio (estilo verde/azul); filtros por categoría, piscina y sótano; ordenar por recientes (fecha creación), precio, categoría, piscina, sótano, habitaciones, m² o €/m²; miniatura de la foto en la línea del desplegable; fecha de creación al dar de alta.
         - **1.6.0** — Resaltado en verde de todos los campos de bonificación (bonif., bonificado, bonificación) en alta y edición de hipotecas.
