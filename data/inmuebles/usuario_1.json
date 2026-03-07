@@ -21,7 +21,9 @@
       "url_anuncio": "https://www.idealista.com/inmueble/110670317/",
       "categoria": "Interesados",
       "fecha_creacion": "2026-03-07T12:24:24.327449",
-      "id": 1
+      "id": 1,
+      "consumo_exacto_kwh_m2": 185.0,
+      "emisiones_exactas_kg_m2": 34.0
     }
   ]
 }
