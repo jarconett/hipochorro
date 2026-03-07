@@ -72,7 +72,7 @@ CERT_ENERGETICO_OPCIONES = ["—", "A", "B", "C", "D", "E", "F", "G", "En trámi
 
 # Consumo de energía (kWh/m²·año) por letra del certificado — tabla oficial (rangos de calificación)
 # Fuente: tabla de consumo y emisiones del certificado energético (tabla-energetica.png)
-# Rangos consumo: A <55, B 55-85, C 85-125, D 125-175, E 175-230, F 230-275, G ≥275 → punto medio para estimar
+# Rangos consumo (kWh/m²·año): A <55, B 55-85, C 85-125, D 125-175, E 175-230, F 230-275, G ≥275 → punto medio para estimar
 CONSUMO_REFERENCIA_KWH_M2_POR_LETRA = {
     "A": 27.5,   # < 55
     "B": 70.0,   # 55-85
@@ -82,6 +82,37 @@ CONSUMO_REFERENCIA_KWH_M2_POR_LETRA = {
     "F": 252.5,  # 230-275
     "G": 287.5,  # ≥ 275 (representativo)
 }
+
+# Límites superiores (valor < límite → letra) para asignar letra desde valor numérico de consumo (kWh/m²·año)
+_RANGOS_CONSUMO_LIMITES = [(55, "A"), (85, "B"), (125, "C"), (175, "D"), (230, "E"), (275, "F"), (float("inf"), "G")]
+
+# Emisiones (kg CO₂/m²·año): rangos referencia y límites para asignar letra (escala habitual certificado)
+RANGOS_EMISIONES_REFERENCIA_KG_M2_POR_LETRA = {
+    "A": 6.1,    # < 12.2
+    "B": 16.05,  # 12.2-19.9
+    "C": 25.35,  # 19.9-30.8
+    "D": 39.05,  # 30.8-47.3
+    "E": 65.5,   # 47.3-83.7
+    "F": 92.05,  # 83.7-100.4
+    "G": 110.0,  # ≥ 100.4
+}
+_RANGOS_EMISIONES_LIMITES = [(12.2, "A"), (19.9, "B"), (30.8, "C"), (47.3, "D"), (83.7, "E"), (100.4, "F"), (float("inf"), "G")]
+
+
+def _letra_desde_consumo_kwh_m2(valor: float) -> str:
+    """Asigna la letra del certificado (A-G) según el consumo en kWh/m²·año y la tabla de rangos."""
+    for limite, letra in _RANGOS_CONSUMO_LIMITES:
+        if valor < limite:
+            return letra
+    return "G"
+
+
+def _letra_desde_emisiones_kg_m2(valor: float) -> str:
+    """Asigna la letra del certificado (A-G) según las emisiones en kg CO₂/m²·año y la tabla de rangos."""
+    for limite, letra in _RANGOS_EMISIONES_LIMITES:
+        if valor < limite:
+            return letra
+    return "G"
 
 # Zona climática CTE (Código Técnico de la Edificación): opciones para selectbox
 ZONAS_CTE_OPCIONES = (zcte.get_opciones_zona() if zcte else ["—"] + [f"{l}{n}" for l in "ABCDE" for n in "1234"])
@@ -121,14 +152,18 @@ AREA_PLACA_TIPICA_M2 = 1.7
 def _consumo_anual_desde_certificado(inv: dict) -> float | None:
     """
     Estima el consumo eléctrico anual (kWh) a partir del certificado energético (consumo)
-    y la superficie del inmueble. Usa CONSUMO_REFERENCIA_KWH_M2_POR_LETRA y m² útiles o construidos.
-    Devuelve None si no hay letra válida (A-G) o no hay superficie.
+    y la superficie del inmueble. Si existe consumo_exacto_kwh_m2 se usa ese valor × m²;
+    si no, se usa la letra (certificado_consumo) y el punto medio del rango de la tabla.
+    Devuelve None si no hay dato válido o no hay superficie.
     """
-    letra = (inv.get("certificado_consumo") or inv.get("certificado_energetico") or "").strip().upper()
-    if letra not in CONSUMO_REFERENCIA_KWH_M2_POR_LETRA:
-        return None
     m2 = float(inv.get("m2_utiles", 0) or 0) or float(inv.get("m2_construidos", 0) or 0)
     if m2 <= 0:
+        return None
+    consumo_m2 = float(inv.get("consumo_exacto_kwh_m2", 0) or 0)
+    if consumo_m2 > 0:
+        return round(consumo_m2 * m2, 0)
+    letra = (inv.get("certificado_consumo") or inv.get("certificado_energetico") or "").strip().upper()
+    if letra not in CONSUMO_REFERENCIA_KWH_M2_POR_LETRA:
         return None
     kwh_m2 = CONSUMO_REFERENCIA_KWH_M2_POR_LETRA[letra]
     return round(kwh_m2 * m2, 0)
@@ -306,6 +341,37 @@ _REQUEST_HEADERS = {
 }
 
 
+def _normalizar_url_imagen(u: str) -> str | None:
+    """Devuelve la URL si parece una imagen de contenido; None si es logo/icono/etc."""
+    if not u or not isinstance(u, str) or not u.startswith("http"):
+        return None
+    s = u.lower()
+    if any(x in s for x in ("logo", "icon", "pixel", "avatar", "banner", "cookie", "tracking")):
+        return None
+    if ".jpg" in s or ".jpeg" in s or ".png" in s or ".webp" in s:
+        return u
+    return None
+
+
+def _urls_desde_lista_imagenes(objs: list) -> list:
+    """Convierte una lista (de strings o de dicts con 'url'/'src'/'image') en lista de URLs de imagen."""
+    out = []
+    for x in objs:
+        if isinstance(x, str):
+            u = _normalizar_url_imagen(x)
+            if u:
+                out.append(u)
+        elif isinstance(x, dict):
+            for key in ("url", "src", "image", "href", "link", "srcUrl"):
+                u = x.get(key)
+                if isinstance(u, str):
+                    u = _normalizar_url_imagen(u)
+                    if u:
+                        out.append(u)
+                        break
+    return out
+
+
 def _extraer_urls_desde_json(html: str, url_base: str) -> list:
     """Busca en el HTML JSON embebido (Idealista, etc.) y extrae URLs de imágenes."""
     urls = []
@@ -313,13 +379,14 @@ def _extraer_urls_desde_json(html: str, url_base: str) -> list:
     patron = re.compile(r'["\'](?:url|src|image|href)["\']\s*:\s*["\'](https?://[^"\']+\.(?:jpg|jpeg|png|webp)(?:\?[^"\']*)?)["\']', re.I)
     for m in patron.finditer(html):
         u = m.group(1)
-        if any(x in u.lower() for x in ("logo", "icon", "pixel", "avatar", "banner", "cookie", "tracking")):
-            continue
-        urls.append(u)
-    # Idealista: a veces usa "multimedia": [{"url": "..."}] o "images": ["..."]
+        if _normalizar_url_imagen(u):
+            urls.append(u)
+    # Idealista: todas las URLs de imagen de su dominio (galería en JSON o atributos)
     patron2 = re.compile(r'https?://(?:img\d*\.)?idealista\.(?:com|pt|it)[^"\')\s]+\.(?:jpg|jpeg|png|webp)(?:\?[^"\')\s]*)?', re.I)
     for m in patron2.finditer(html):
-        urls.append(m.group(0))
+        u = m.group(0)
+        if _normalizar_url_imagen(u):
+            urls.append(u)
     return list(dict.fromkeys(urls))
 
 
@@ -339,10 +406,23 @@ def _obtener_imagenes_idealista_zenrows(url_anuncio: str, property_id: str, api_
         if r.status_code != 200:
             return []
         data = r.json()
-        images = data.get("property_images") or data.get("images") or []
-        if isinstance(images, list):
-            return [u for u in images if isinstance(u, str) and u.startswith("http") and (".jpg" in u or ".jpeg" in u or ".png" in u or ".webp" in u)]
-        return []
+        # Respuesta puede ser lista de URLs o lista de objetos { "url": "..." }; también buscar en anidados
+        urls = []
+        for key in ("property_images", "images", "gallery", "multimedia", "photos", "imageUrls"):
+            val = data.get(key)
+            if isinstance(val, list):
+                urls.extend(_urls_desde_lista_imagenes(val))
+            elif isinstance(val, str) and _normalizar_url_imagen(val):
+                urls.append(val)
+        # Estructura anidada tipo data.property.multimedia
+        for nest in ("data", "property", "result"):
+            sub = data.get(nest)
+            if isinstance(sub, dict):
+                for key in ("property_images", "images", "gallery", "multimedia", "photos"):
+                    val = sub.get(key)
+                    if isinstance(val, list):
+                        urls.extend(_urls_desde_lista_imagenes(val))
+        return list(dict.fromkeys(urls))
     except Exception:
         return []
 
@@ -361,13 +441,11 @@ def _obtener_imagenes_idealista_apify(url_anuncio: str, api_token: str) -> list:
         items = list(client.dataset(run["defaultDatasetId"]).iterate_items())
         urls = []
         for item in items:
-            for key in ("images", "property_images", "propertyImages", "photos", "imageUrls"):
+            for key in ("images", "property_images", "propertyImages", "photos", "imageUrls", "gallery", "multimedia"):
                 val = item.get(key)
                 if isinstance(val, list):
-                    for u in val:
-                        if isinstance(u, str) and u.startswith("http") and (".jpg" in u or ".jpeg" in u or ".png" in u or ".webp" in u):
-                            urls.append(u)
-                elif isinstance(val, str) and val.startswith("http"):
+                    urls.extend(_urls_desde_lista_imagenes(val))
+                elif isinstance(val, str) and _normalizar_url_imagen(val):
                     urls.append(val)
         return list(dict.fromkeys(urls))
     except Exception:
@@ -1420,15 +1498,30 @@ def _editor_inmueble(usuario_id: int, inv: dict):
         habitaciones = st.number_input("Habitaciones", min_value=0, max_value=20, value=int(inv.get("habitaciones", 0) or 0), step=1, key=f"ei_hab_{inv_id}")
         banos = st.number_input("Baños", min_value=0, max_value=10, value=int(inv.get("banos", 0) or 0), step=1, key=f"ei_ban_{inv_id}")
         cert_legacy = inv.get("certificado_energetico") or "—"
-        cert_consumo_val = inv.get("certificado_consumo") or cert_legacy or "—"
-        cert_emisiones_val = inv.get("certificado_emisiones") or cert_legacy or "—"
+        consumo_exacto = float(inv.get("consumo_exacto_kwh_m2", 0) or 0)
+        emisiones_exactas = float(inv.get("emisiones_exactas_kg_m2", 0) or 0)
+        if consumo_exacto > 0:
+            cert_consumo_val = _letra_desde_consumo_kwh_m2(consumo_exacto)
+        else:
+            cert_consumo_val = inv.get("certificado_consumo") or cert_legacy or "—"
+        if emisiones_exactas > 0:
+            cert_emisiones_val = _letra_desde_emisiones_kg_m2(emisiones_exactas)
+        else:
+            cert_emisiones_val = inv.get("certificado_emisiones") or cert_legacy or "—"
         idx_consumo = CERT_ENERGETICO_OPCIONES.index(cert_consumo_val) if cert_consumo_val in CERT_ENERGETICO_OPCIONES else 0
         idx_emisiones = CERT_ENERGETICO_OPCIONES.index(cert_emisiones_val) if cert_emisiones_val in CERT_ENERGETICO_OPCIONES else 0
+        st.caption("**Certificado energético:** introduce el valor exacto (kWh/m²·año o kg CO₂/m²·año) para que se asigne la letra; si no, elige la letra y se usará el valor medio del rango.")
         col_cert1, col_cert2 = st.columns(2)
         with col_cert1:
-            certificado_consumo = st.selectbox("Cert. energético (consumo)", CERT_ENERGETICO_OPCIONES, index=idx_consumo, key=f"ei_cert_cons_{inv_id}")
+            consumo_exacto_input = st.number_input("Consumo exacto (kWh/m²·año)", min_value=0.0, value=consumo_exacto, step=5.0, key=f"ei_consumo_ex_{inv_id}", help="Opcional. Si lo rellenas, se asigna la letra automáticamente.")
+            certificado_consumo = st.selectbox("Cert. energético (consumo)", CERT_ENERGETICO_OPCIONES, index=idx_consumo, key=f"ei_cert_cons_{inv_id}", disabled=(consumo_exacto_input > 0))
+            if consumo_exacto_input > 0:
+                st.caption(f"→ Letra asignada: **{_letra_desde_consumo_kwh_m2(consumo_exacto_input)}**")
         with col_cert2:
-            certificado_emisiones = st.selectbox("Cert. energético (emisiones)", CERT_ENERGETICO_OPCIONES, index=idx_emisiones, key=f"ei_cert_emis_{inv_id}")
+            emisiones_exactas_input = st.number_input("Emisiones exactas (kg CO₂/m²·año)", min_value=0.0, value=emisiones_exactas, step=1.0, key=f"ei_emisiones_ex_{inv_id}", help="Opcional. Si lo rellenas, se asigna la letra automáticamente.")
+            certificado_emisiones = st.selectbox("Cert. energético (emisiones)", CERT_ENERGETICO_OPCIONES, index=idx_emisiones, key=f"ei_cert_emis_{inv_id}", disabled=(emisiones_exactas_input > 0))
+            if emisiones_exactas_input > 0:
+                st.caption(f"→ Letra asignada: **{_letra_desde_emisiones_kg_m2(emisiones_exactas_input)}**")
         zona_cte_val = (inv.get("zona_climatica_cte") or "").strip() or "—"
         idx_zona = ZONAS_CTE_OPCIONES.index(zona_cte_val) if zona_cte_val in ZONAS_CTE_OPCIONES else 0
         zona_climatica_cte = st.selectbox("Zona climática CTE", ZONAS_CTE_OPCIONES, index=idx_zona, key=f"ei_zona_cte_{inv_id}", help="Clasificación según Código Técnico de la Edificación (ej. B3, C2).")
@@ -1447,7 +1540,9 @@ def _editor_inmueble(usuario_id: int, inv: dict):
         cat_actual = _categoria_inmueble(inv)
         categoria = st.radio("Categoría", CATEGORIAS_INMUEBLE, horizontal=True, index=CATEGORIAS_INMUEBLE.index(cat_actual) if cat_actual in CATEGORIAS_INMUEBLE else 0, key=f"ei_cat_{inv_id}")
         if st.form_submit_button("Guardar cambios"):
-            inv_act = {**inv, "importe": importe, "localizacion": localizacion, "ano_construccion": int(ano_construccion), "m2_construidos": m2_construidos, "m2_utiles": m2_utiles, "superficie_placas_m2": float(superficie_placas_m2), "habitaciones": int(habitaciones), "banos": int(banos), "certificado_consumo": certificado_consumo if certificado_consumo != "—" else "", "certificado_emisiones": certificado_emisiones if certificado_emisiones != "—" else "", "zona_climatica_cte": zona_climatica_cte if zona_climatica_cte != "—" else "", "notas": (notas or "").strip(), "piscina": piscina, "sotano": sotano, "placas_solares": placas_solares, "inmobiliaria": inmobiliaria, "comision_venta_pct": comision_venta_pct, "url_anuncio": url_anuncio.strip(), "categoria": categoria}
+            cert_consumo_final = _letra_desde_consumo_kwh_m2(consumo_exacto_input) if consumo_exacto_input > 0 else (certificado_consumo if certificado_consumo != "—" else "")
+            cert_emisiones_final = _letra_desde_emisiones_kg_m2(emisiones_exactas_input) if emisiones_exactas_input > 0 else (certificado_emisiones if certificado_emisiones != "—" else "")
+            inv_act = {**inv, "importe": importe, "localizacion": localizacion, "ano_construccion": int(ano_construccion), "m2_construidos": m2_construidos, "m2_utiles": m2_utiles, "superficie_placas_m2": float(superficie_placas_m2), "habitaciones": int(habitaciones), "banos": int(banos), "certificado_consumo": cert_consumo_final, "certificado_emisiones": cert_emisiones_final, "consumo_exacto_kwh_m2": float(consumo_exacto_input), "emisiones_exactas_kg_m2": float(emisiones_exactas_input), "zona_climatica_cte": zona_climatica_cte if zona_climatica_cte != "—" else "", "notas": (notas or "").strip(), "piscina": piscina, "sotano": sotano, "placas_solares": placas_solares, "inmobiliaria": inmobiliaria, "comision_venta_pct": comision_venta_pct, "url_anuncio": url_anuncio.strip(), "categoria": categoria}
             if ghd.actualizar_inmueble(usuario_id, inv_act):
                 st.success("Inmueble actualizado.")
                 st.rerun()
@@ -1477,11 +1572,18 @@ def agenda_inmuebles(usuario_id: int):
         superficie_placas_m2 = st.number_input("Superficie disponible para placas solares (m²)", min_value=0.0, value=0.0, step=1.0, help="Superficie útil para instalar placas; sirve para estimar nº de placas y si podría acogerse a subvención.")
         habitaciones = st.number_input("Habitaciones", min_value=0, max_value=20, value=3, step=1)
         banos = st.number_input("Baños", min_value=0, max_value=10, value=2, step=1)
+        st.caption("**Certificado energético:** valor exacto (opcional) para asignar letra automática; si no, elige la letra y se usará el valor medio del rango.")
         col_c1, col_c2 = st.columns(2)
         with col_c1:
-            certificado_consumo = st.selectbox("Cert. energético (consumo)", CERT_ENERGETICO_OPCIONES)
+            consumo_exacto_alta = st.number_input("Consumo exacto (kWh/m²·año)", min_value=0.0, value=0.0, step=5.0, help="Opcional. Si lo rellenas, se asigna la letra automáticamente.")
+            certificado_consumo = st.selectbox("Cert. energético (consumo)", CERT_ENERGETICO_OPCIONES, disabled=(consumo_exacto_alta > 0))
+            if consumo_exacto_alta > 0:
+                st.caption(f"→ Letra asignada: **{_letra_desde_consumo_kwh_m2(consumo_exacto_alta)}**")
         with col_c2:
-            certificado_emisiones = st.selectbox("Cert. energético (emisiones)", CERT_ENERGETICO_OPCIONES)
+            emisiones_exactas_alta = st.number_input("Emisiones exactas (kg CO₂/m²·año)", min_value=0.0, value=0.0, step=1.0, help="Opcional. Si lo rellenas, se asigna la letra automáticamente.")
+            certificado_emisiones = st.selectbox("Cert. energético (emisiones)", CERT_ENERGETICO_OPCIONES, disabled=(emisiones_exactas_alta > 0))
+            if emisiones_exactas_alta > 0:
+                st.caption(f"→ Letra asignada: **{_letra_desde_emisiones_kg_m2(emisiones_exactas_alta)}**")
         zona_climatica_cte = st.selectbox("Zona climática CTE", ZONAS_CTE_OPCIONES, index=0, help="Clasificación según CTE (ej. B3, C2). Puedes rellenar desde el PDF de zonas por municipio.")
         notas = st.text_area("Notas", placeholder="Ej: oferta realizada, necesita reforma, observaciones…", height=80)
         col_ps, col_pi, col_so = st.columns(3)
@@ -1497,6 +1599,8 @@ def agenda_inmuebles(usuario_id: int):
         url_anuncio = st.text_input("URL del anuncio (portal inmobiliario)", placeholder="https://...")
         categoria = st.radio("Categoría", CATEGORIAS_INMUEBLE, horizontal=True, index=0)
         if st.form_submit_button("Dar de alta inmueble"):
+            cert_consumo_alta = _letra_desde_consumo_kwh_m2(consumo_exacto_alta) if consumo_exacto_alta > 0 else (certificado_consumo if certificado_consumo != "—" else "")
+            cert_emisiones_alta = _letra_desde_emisiones_kg_m2(emisiones_exactas_alta) if emisiones_exactas_alta > 0 else (certificado_emisiones if certificado_emisiones != "—" else "")
             inv = {
                 "importe": float(importe),
                 "localizacion": (localizacion or "").strip(),
@@ -1506,8 +1610,10 @@ def agenda_inmuebles(usuario_id: int):
                 "superficie_placas_m2": float(superficie_placas_m2),
                 "habitaciones": int(habitaciones),
                 "banos": int(banos),
-                "certificado_consumo": certificado_consumo if certificado_consumo != "—" else "",
-                "certificado_emisiones": certificado_emisiones if certificado_emisiones != "—" else "",
+                "certificado_consumo": cert_consumo_alta,
+                "certificado_emisiones": cert_emisiones_alta,
+                "consumo_exacto_kwh_m2": float(consumo_exacto_alta),
+                "emisiones_exactas_kg_m2": float(emisiones_exactas_alta),
                 "zona_climatica_cte": zona_climatica_cte if zona_climatica_cte != "—" else "",
                 "notas": (notas or "").strip(),
                 "piscina": bool(piscina),
@@ -1617,6 +1723,7 @@ def agenda_inmuebles(usuario_id: int):
                 else:
                     st.caption("—")
             with col_exp:
+                inv_id = inv.get("id")
                 with st.expander(titulo):
                     # Badge de categoría con color (verde #083 / azul #038)
                     color = "#083" if cat == CATEGORIA_INTERESADOS else "#038"
@@ -1633,8 +1740,16 @@ def agenda_inmuebles(usuario_id: int):
                     hab = inv.get("habitaciones")
                     ban = inv.get("banos")
                     p_m2 = _precio_m2_inmueble(inv)
-                    cert_consumo = inv.get("certificado_consumo") or inv.get("certificado_energetico") or "—"
-                    cert_emisiones = inv.get("certificado_emisiones") or inv.get("certificado_energetico") or "—"
+                    consumo_exacto_inv = float(inv.get("consumo_exacto_kwh_m2", 0) or 0)
+                    emisiones_exactas_inv = float(inv.get("emisiones_exactas_kg_m2", 0) or 0)
+                    if consumo_exacto_inv > 0:
+                        cert_consumo = f"{consumo_exacto_inv:.0f} kWh/m²·año ({_letra_desde_consumo_kwh_m2(consumo_exacto_inv)})"
+                    else:
+                        cert_consumo = inv.get("certificado_consumo") or inv.get("certificado_energetico") or "—"
+                    if emisiones_exactas_inv > 0:
+                        cert_emisiones = f"{emisiones_exactas_inv:.1f} kg CO₂/m²·año ({_letra_desde_emisiones_kg_m2(emisiones_exactas_inv)})"
+                    else:
+                        cert_emisiones = inv.get("certificado_emisiones") or inv.get("certificado_energetico") or "—"
                     p_m2_str = f" · **{p_m2:.0f} €/m²**" if p_m2 is not None else ""
                     extras = []
                     if inv.get("piscina"):
@@ -1687,7 +1802,6 @@ def agenda_inmuebles(usuario_id: int):
                     st.caption(f"Coste total compra: **{d['total']:.0f} €** (precio + comisión + ITP {ITP_PCT}% + notaría + registro + gestoría {GESTORIA_EUR:.0f} €)")
                     if inv.get("url_anuncio"):
                         st.markdown(f"[Ver anuncio]({inv['url_anuncio']})")
-                    inv_id = inv.get("id")
                     # Mapa: comprobar geocodificación y permitir recolocar el pin y guardar coordenadas
                     if folium is not None and st_folium is not None and inv_id is not None:
                         st.markdown("**Mapa** (haz clic en el mapa para recolocar el pin)")
@@ -1733,17 +1847,31 @@ def agenda_inmuebles(usuario_id: int):
                     if inv.get("url_anuncio"):
                         if "idealista" in (inv.get("url_anuncio") or "").lower():
                             st.caption("Idealista suele bloquear peticiones directas (403). Configura **APIFY_TOKEN** o **ZENROWS_API_KEY** en secrets (ver `docs/IDEALISTA_SCRAPING.md`).")
-                        if st.button("🖼 Obtener fotos desde anuncio", key=f"btn_obt_fotos_{inv_id}"):
-                            try:
-                                with st.spinner("Extrayendo imágenes del anuncio…"):
-                                    urls = extraer_urls_imagenes_anuncio(inv["url_anuncio"])
-                                if urls:
-                                    st.session_state.fotos_extraidas = {"inmueble_id": inv_id, "urls": urls}
-                                else:
-                                    st.warning("No se encontraron imágenes en el anuncio o el portal no permite extraerlas.")
-                            except ValueError as e:
-                                st.error(str(e))
-                            st.rerun()
+                        col_obt, col_rec = st.columns(2)
+                        with col_obt:
+                            if st.button("🖼 Obtener fotos desde anuncio", key=f"btn_obt_fotos_{inv_id}"):
+                                try:
+                                    with st.spinner("Extrayendo imágenes del anuncio…"):
+                                        urls = extraer_urls_imagenes_anuncio(inv["url_anuncio"])
+                                    if urls:
+                                        st.session_state.fotos_extraidas = {"inmueble_id": inv_id, "urls": urls}
+                                    else:
+                                        st.warning("No se encontraron imágenes en el anuncio o el portal no permite extraerlas.")
+                                except ValueError as e:
+                                    st.error(str(e))
+                                st.rerun()
+                        with col_rec:
+                            if "idealista" in (inv.get("url_anuncio") or "").lower() and st.button("🔄 Recargar imágenes desde Idealista", key=f"btn_recargar_fotos_{inv_id}", help="Vuelve a extraer las imágenes del anuncio de Idealista."):
+                                try:
+                                    with st.spinner("Recargando imágenes desde Idealista…"):
+                                        urls = extraer_urls_imagenes_anuncio(inv["url_anuncio"])
+                                    if urls:
+                                        st.session_state.fotos_extraidas = {"inmueble_id": inv_id, "urls": urls}
+                                    else:
+                                        st.warning("No se encontraron imágenes en el anuncio.")
+                                except ValueError as e:
+                                    st.error(str(e))
+                                st.rerun()
                     fotos_extraidas = st.session_state.get("fotos_extraidas")
                     if fotos_extraidas and fotos_extraidas.get("inmueble_id") == inv_id and fotos_extraidas.get("urls"):
                         urls_list = fotos_extraidas["urls"]
@@ -1821,8 +1949,8 @@ def _tab_comparador_inmuebles(usuario_id: int):
         ("Habitaciones", lambda inv: _valor(inv, "habitaciones")),
         ("Baños", lambda inv: _valor(inv, "banos")),
         ("Año construcción", lambda inv: _valor(inv, "ano_construccion")),
-        ("Cert. consumo", lambda inv: inv.get("certificado_consumo") or inv.get("certificado_energetico") or "—"),
-        ("Cert. emisiones", lambda inv: inv.get("certificado_emisiones") or inv.get("certificado_energetico") or "—"),
+        ("Cert. consumo", lambda inv: f"{float(inv.get('consumo_exacto_kwh_m2') or 0):.0f} ({_letra_desde_consumo_kwh_m2(float(inv.get('consumo_exacto_kwh_m2') or 0))})" if float(inv.get("consumo_exacto_kwh_m2") or 0) > 0 else (inv.get("certificado_consumo") or inv.get("certificado_energetico") or "—")),
+        ("Cert. emisiones", lambda inv: f"{float(inv.get('emisiones_exactas_kg_m2') or 0):.1f} ({_letra_desde_emisiones_kg_m2(float(inv.get('emisiones_exactas_kg_m2') or 0))})" if float(inv.get("emisiones_exactas_kg_m2") or 0) > 0 else (inv.get("certificado_emisiones") or inv.get("certificado_energetico") or "—")),
         ("Piscina", lambda inv: "Sí" if inv.get("piscina") else "No"),
         ("Sótano", lambda inv: "Sí" if inv.get("sotano") else "No"),
         ("Placas solares", lambda inv: "Sí" if inv.get("placas_solares") else "No"),
