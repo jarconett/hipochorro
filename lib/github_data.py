@@ -36,6 +36,7 @@ USUARIOS_FILE = f"{DATA_DIR}/usuarios.json"
 HIPOTECAS_DIR = f"{DATA_DIR}/hipotecas"
 INMUEBLES_DIR = f"{DATA_DIR}/inmuebles"
 INMUEBLES_FOTOS_DIR = f"{DATA_DIR}/inmuebles_fotos"
+INMUEBLES_SUNLIGHT_DIR = f"{DATA_DIR}/inmuebles_sunlight"
 LOGOS_DIR = f"{DATA_DIR}/logos"
 
 def _slug(texto: str) -> str:
@@ -288,3 +289,52 @@ def get_fotos_inmueble_urls(usuario_id: int, inmueble_id: int, branch: str = "ma
         return sorted(urls)
     except Exception:
         return []
+
+
+def _path_sunlight(usuario_id: int, inmueble_id: int) -> str:
+    return f"{INMUEBLES_SUNLIGHT_DIR}/u{usuario_id}_i{inmueble_id}.json"
+
+
+def guardar_sunlight_inmueble(usuario_id: int, inmueble_id: int, data: dict) -> bool:
+    """Guarda el JSON de horas de sol del inmueble en un archivo aparte (evita payload grande en usuario_.json)."""
+    repo = _repo()
+    if not repo:
+        return False
+    path = _path_sunlight(usuario_id, inmueble_id)
+    contenido = json.dumps(data, indent=2, ensure_ascii=False)
+    try:
+        c = repo.get_contents(path)
+        repo.update_file(path, "Actualizar datos sol inmueble", contenido, c.sha)
+    except Exception:
+        try:
+            repo.create_file(path, "Añadir datos sol inmueble", contenido)
+        except Exception:
+            return False
+    return True
+
+
+def get_sunlight_inmueble(usuario_id: int, inmueble_id: int) -> Optional[dict]:
+    """Lee el JSON de horas de sol del inmueble desde el archivo en GitHub. None si no existe."""
+    repo = _repo()
+    if not repo:
+        return None
+    path = _path_sunlight(usuario_id, inmueble_id)
+    try:
+        c = repo.get_contents(path)
+        return json.loads(base64.b64decode(c.content).decode())
+    except Exception:
+        return None
+
+
+def eliminar_sunlight_inmueble(usuario_id: int, inmueble_id: int) -> bool:
+    """Elimina el archivo de datos de sol del inmueble en GitHub."""
+    repo = _repo()
+    if not repo:
+        return False
+    path = _path_sunlight(usuario_id, inmueble_id)
+    try:
+        c = repo.get_contents(path)
+        repo.delete_file(path, "Eliminar datos sol inmueble", c.sha)
+        return True
+    except Exception:
+        return False

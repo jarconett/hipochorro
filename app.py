@@ -60,7 +60,7 @@ HELP_TAE = (
 APIFY_TOKEN_SECRET = "APIFY_TOKEN_SECRET"
 
 # Versión de la aplicación (visible en sidebar y changelog)
-VERSION_APP = "1.11.0"
+VERSION_APP = "1.12.0"
 
 # Gastos de compra (sobre precio de la vivienda / ITP)
 ITP_PCT = 7.0           # Impuesto de Transmisiones Patrimoniales: % sobre precio vivienda
@@ -154,18 +154,30 @@ EFICIENCIA_PLACA_DEFAULT = 0.20
 PERFORMANCE_RATIO_DEFAULT = 0.80
 
 
-def _datos_sol_desde_json(inv: dict) -> tuple[float | None, float | None]:
+def _get_sunlight_data(inv: dict, usuario_id: int | None) -> dict | None:
+    """
+    Obtiene el dict de datos de sol del inmueble.
+    Si horas_luz_anual es True, lee del archivo en GitHub; si es un dict (legacy), lo devuelve.
+    """
+    hl = inv.get("horas_luz_anual")
+    if hl is True and usuario_id is not None and inv.get("id"):
+        return ghd.get_sunlight_inmueble(usuario_id, inv["id"])
+    if isinstance(hl, dict) and hl.get("minutesOfDirectSunPerDay"):
+        return hl
+    return None
+
+
+def _datos_sol_desde_json(inv: dict, usuario_id: int | None = None) -> tuple[float | None, float | None]:
     """
     Extrae del JSON de horas de luz del inmueble: horas de sol anuales y kWh/m²·año recibidos.
     Convención: 1 hora de sol directo ≈ 1 kWh/m² (equivalente pico).
     Returns (horas_sol_anuales, kWh_m2_anual) o (None, None) si no hay datos.
     """
-    hl = inv.get("horas_luz_anual")
-    if not hl or not isinstance(hl, dict) or not hl.get("minutesOfDirectSunPerDay"):
+    hl = _get_sunlight_data(inv, usuario_id)
+    if not hl or not hl.get("minutesOfDirectSunPerDay"):
         return None, None
     total_min = hl.get("minutesOfDirectSunPerYear") or sum(hl["minutesOfDirectSunPerDay"])
     horas = total_min / 60.0
-    # Irradiación: 1 peak sun hour = 1 kWh/m²
     kwh_m2_anual = horas
     return horas, kwh_m2_anual
 
@@ -1624,11 +1636,12 @@ def _editor_inmueble(usuario_id: int, inv: dict):
         url_inmobiliaria = st.text_input("URL inmobiliaria", value=inv.get("url_inmobiliaria", "") or "", key=f"ei_url_inm_{inv_id}", placeholder="https://...", help="Web propia de la inmobiliaria con el anuncio; suele permitir extraer las imágenes con más facilidad.")
         cat_actual = _categoria_inmueble(inv)
         categoria = st.radio("Categoría", CATEGORIAS_INMUEBLE, horizontal=True, index=CATEGORIAS_INMUEBLE.index(cat_actual) if cat_actual in CATEGORIAS_INMUEBLE else 0, key=f"ei_cat_{inv_id}")
-        st.caption("**Horas de luz anuales:** sube un JSON (minutesOfDirectSunPerDay, minutesOfDirectSunPerYear) para actualizar o reemplazar.")
+        st.caption("**Horas de luz anuales:** sube un JSON (minutesOfDirectSunPerDay, minutesOfDirectSunPerYear). Se guarda en un archivo aparte para evitar timeouts.")
         upload_sunlight = st.file_uploader("Archivo JSON horas de sol", type=["json"], key=f"ei_sun_{inv_id}", help="Mismo formato que annual-sunlight.json.")
         eliminar_sunlight = False
-        if inv.get("horas_luz_anual"):
-            total_actual = inv["horas_luz_anual"].get("minutesOfDirectSunPerYear") or sum(inv["horas_luz_anual"].get("minutesOfDirectSunPerDay", []))
+        sunlight_data = _get_sunlight_data(inv, usuario_id)
+        if sunlight_data:
+            total_actual = sunlight_data.get("minutesOfDirectSunPerYear") or sum(sunlight_data.get("minutesOfDirectSunPerDay", []))
             st.caption(f"Datos actuales: **{total_actual:.0f}** min/año ({total_actual / 60:.1f} h).")
             eliminar_sunlight = st.checkbox("Eliminar datos de horas de sol", key=f"ei_del_sun_{inv_id}")
         if st.form_submit_button("Guardar cambios"):
@@ -1638,9 +1651,18 @@ def _editor_inmueble(usuario_id: int, inv: dict):
             if upload_sunlight:
                 parsed_sun = _parse_sunlight_json(upload_sunlight)
                 if parsed_sun:
-                    inv_act["horas_luz_anual"] = parsed_sun
+                    if ghd.guardar_sunlight_inmueble(usuario_id, inv_id, parsed_sun):
+                        inv_act["horas_luz_anual"] = True
+                    else:
+                        st.error("Error al guardar el archivo de horas de sol.")
             elif eliminar_sunlight:
-                inv_act["horas_luz_anual"] = None
+                ghd.eliminar_sunlight_inmueble(usuario_id, inv_id)
+                inv_act["horas_luz_anual"] = False
+            else:
+                # Migrar legacy: si tenía el dict embebido, pasarlo a archivo para no volver a enviar payload grande
+                if isinstance(inv.get("horas_luz_anual"), dict) and inv["horas_luz_anual"].get("minutesOfDirectSunPerDay"):
+                    if ghd.guardar_sunlight_inmueble(usuario_id, inv_id, inv["horas_luz_anual"]):
+                        inv_act["horas_luz_anual"] = True
             if ghd.actualizar_inmueble(usuario_id, inv_act):
                 st.success("Inmueble actualizado.")
                 st.rerun()
@@ -1729,12 +1751,12 @@ def agenda_inmuebles(usuario_id: int):
                 "categoria": categoria,
                 "fecha_creacion": datetime.now().isoformat(),
             }
-            if sunlight_file_alta:
-                parsed_sun = _parse_sunlight_json(sunlight_file_alta)
-                if parsed_sun:
-                    inv["horas_luz_anual"] = parsed_sun
             nuevo = ghd.añadir_inmueble(usuario_id, inv)
             if nuevo:
+                if sunlight_file_alta:
+                    parsed_sun = _parse_sunlight_json(sunlight_file_alta)
+                    if parsed_sun and ghd.guardar_sunlight_inmueble(usuario_id, nuevo["id"], parsed_sun):
+                        ghd.actualizar_inmueble(usuario_id, {**nuevo, "horas_luz_anual": True})
                 st.success("Inmueble dado de alta. Abre su ficha y usa «Obtener / Recargar imágenes» para elegir las fotos desde Idealista y/o la web de la inmobiliaria.")
                 st.rerun()
             else:
@@ -1884,7 +1906,7 @@ def agenda_inmuebles(usuario_id: int):
                             with st.expander("☀️ Cálculo placas solares para subvención", expanded=False):
                                 st.caption("Estima el número de placas y la superficie necesaria para alcanzar la reducción energética mínima. Si has subido un JSON de horas de sol, se usa la irradiación real del inmueble con eficiencia y pérdidas (PR) para el rendimiento por placa.")
                                 # Datos de irradiación desde JSON (horas de sol / kWh/m²·año)
-                                horas_sol, kwh_m2_anual = _datos_sol_desde_json(inv)
+                                horas_sol, kwh_m2_anual = _datos_sol_desde_json(inv, usuario_id)
                                 if horas_sol is not None and kwh_m2_anual is not None:
                                     st.markdown("**Datos de irradiación (JSON horas de sol)**")
                                     st.caption(f"Horas de sol anuales: **{horas_sol:.0f} h** · Energía recibida: **{kwh_m2_anual:.0f} kWh/m²·año** (equivalente pico)")
@@ -1978,9 +2000,9 @@ def agenda_inmuebles(usuario_id: int):
                                         st.rerun()
                                     else:
                                         st.error("Error al guardar.")
-                    # Gráfica horas de sol anuales (desde JSON subido)
-                    horas_luz = inv.get("horas_luz_anual")
-                    if horas_luz and isinstance(horas_luz, dict) and horas_luz.get("minutesOfDirectSunPerDay"):
+                    # Gráfica horas de sol anuales (desde JSON subido, archivo aparte en GitHub)
+                    horas_luz = _get_sunlight_data(inv, usuario_id)
+                    if horas_luz and horas_luz.get("minutesOfDirectSunPerDay"):
                         st.markdown("**☀️ Horas de sol anuales**")
                         arr = horas_luz["minutesOfDirectSunPerDay"]
                         total_min = horas_luz.get("minutesOfDirectSunPerYear") or sum(arr)
@@ -2701,6 +2723,7 @@ def main():
         st.subheader("Changelog")
         st.markdown(f"**Versión actual: {VERSION_APP}**")
         st.markdown("""
+        - **1.12.0** — Horas de sol (JSON): el archivo de exposición solar se guarda en un fichero aparte en GitHub (`data/inmuebles_sunlight/`) en lugar de dentro del JSON del inmueble, evitando timeouts y «Connection lost» al subir. Lectura vía `get_sunlight_inmueble`; migración automática de datos legacy embebidos al guardar la ficha. Irradiación (kWh/m²·año) y cálculo de placas con eficiencia y PR desde datos reales del inmueble.
         - **1.11.0** — Inmuebles: superficie disponible para placas solares (m²) en alta y ficha; leyenda con nº de placas, reducción teórica y apta/no apta para subvención; indicador ⚡ en títulos (sidebar y listado). Certificado energético: valores exactos de consumo (kWh/m²·año) y emisiones (kg CO₂/m²·año) con asignación automática de letra; si no se indica valor exacto se usa el valor medio del rango. Zonas climáticas CTE en módulo y datos (import opcional). Scraper Idealista: extracción de todas las imágenes (listas de objetos y estructuras anidadas en ZenRows/Apify). Botón «Recargar imágenes desde Idealista» en cada ficha.
         - **1.10.0** — Rediseño UI: tema profesional en `.streamlit/config.toml` (colores claro/oscuro, Plus Jakarta Sans), CSS global (espaciado, expanders tipo card, focus visible, tabular-nums en métricas).
         - **1.9.0** — Nueva pestaña «¿Amortizar o Invertir?»: selección de hipoteca, importe de amortización anual, comisiones bonificadas o estándar; comparativa con depósito/fondo (dinero invertido y % rendimiento o importe obtenido); retención por rentas del ahorro (tramos España 19–26 %); comparativa visual amortizar vs invertir.
