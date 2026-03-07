@@ -19,6 +19,29 @@
       "notas": "",
       "lat": 37.254439737859215,
       "lon": -3.6545473337173466
+    },
+    {
+      "importe": 150000.0,
+      "localizacion": "",
+      "ano_construccion": 2000,
+      "m2_construidos": 90.0,
+      "m2_utiles": 75.0,
+      "superficie_placas_m2": 81.0,
+      "habitaciones": 3,
+      "banos": 2,
+      "certificado_consumo": "",
+      "certificado_emisiones": "",
+      "zona_climatica_cte": "",
+      "notas": "",
+      "piscina": false,
+      "sotano": false,
+      "placas_solares": false,
+      "inmobiliaria": false,
+      "comision_venta_pct": 0.0,
+      "url_anuncio": "",
+      "categoria": "Interesados",
+      "fecha_creacion": "2026-03-07T12:16:15.308027",
+      "id": 2
     }
   ]
 }
