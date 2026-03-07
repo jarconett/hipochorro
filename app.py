@@ -941,6 +941,11 @@ def _duracion_str(meses: int) -> str:
     return f"{a} años {m} meses"
 
 
+def _txt_color(valor: str, color: str) -> str:
+    """Texto HTML con color para mostrar importes/porcentajes."""
+    return f"<span style='color:{color}; font-weight:600'>{valor}</span>"
+
+
 def _resumen_costes_hipoteca(
     h: dict,
     amort_anual: float,
@@ -1399,7 +1404,15 @@ def comparador(usuario_id: int):
             "Coste total (€)": round(r.get("coste_total", 0), 2),
         })
     df_ranking = pd.DataFrame(ranking_rows)
-    st.dataframe(df_ranking, use_container_width=True, hide_index=True)
+    style_cols_comision = [c for c in df_ranking.columns if "Comisión" in c or "Comisiones" in c]
+    style_cols_bonif = [c for c in df_ranking.columns if "Bonif." in c or "Bonificación" in c]
+    df_ranking_styled = df_ranking.style
+    if style_cols_comision:
+        df_ranking_styled = df_ranking_styled.applymap(lambda _: "color: #c62828;", subset=style_cols_comision)
+    if style_cols_bonif:
+        df_ranking_styled = df_ranking_styled.applymap(lambda _: "color: #2e7d32;", subset=style_cols_bonif)
+    st.caption("Leyenda: 🔴 comisiones · 🟢 bonificaciones")
+    st.dataframe(df_ranking_styled, use_container_width=True, hide_index=True)
 
     st.markdown("#### Exportar ranking")
     ranking_csv = df_ranking.to_csv(index=False).encode("utf-8")
@@ -1446,9 +1459,28 @@ def comparador(usuario_id: int):
             st.metric("TAE", f"{h.get('tae', 0):.2f}%")
             st.metric("TIN", f"{h.get('tin', 0):.2f}%")
             st.metric("Cuota aprox. (€)", f"{am.cuota_mensual_frances(h.get('cantidad_solicitada',0), h.get('tin',0), h.get('duracion_anos',25)*12):,.0f}")
-            st.caption(f"Comisión apertura: {float(h.get('comision_apertura_pct', h.get('comision_apertura', 0) or 0)):.2f}%")
+            comision_apertura_pct = float(h.get("comision_apertura_pct", h.get("comision_apertura", 0) or 0))
+            st.markdown(
+                f"Comisión apertura: {_txt_color(f'{comision_apertura_pct:.2f}%', '#c62828')}",
+                unsafe_allow_html=True,
+            )
             st.caption(f"Coste vinculados/año: {coste_anual_vinculados(h):,.0f} €")
             r = resumenes.get(h.get("id"), {})
+            comisiones_extra = float(r.get("comisiones_por_extra", 0) or 0)
+            bonif_firma = float(r.get("bonificacion_firma", 0) or 0)
+            bonif_tin = float(r.get("bonif_pp", 0) or 0)
+            st.markdown(
+                f"Comisiones extra: {_txt_color(f'{comisiones_extra:,.2f} €', '#c62828')}",
+                unsafe_allow_html=True,
+            )
+            st.markdown(
+                f"Bonif. firma: {_txt_color(f'{bonif_firma:,.2f} €', '#2e7d32')}",
+                unsafe_allow_html=True,
+            )
+            st.markdown(
+                f"Bonif. TIN: {_txt_color(f'{bonif_tin:.2f} p.p.', '#2e7d32')}",
+                unsafe_allow_html=True,
+            )
             st.caption(f"Coste total (según criterio): {r.get('coste_total', 0):,.0f} €")
 
     # Tabla de cuotas por año (amortización francesa) para la primera selección o selector
