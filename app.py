@@ -1517,6 +1517,7 @@ def _editor_inmueble(usuario_id: int, inv: dict):
     inv_id = inv.get("id")
     with st.form(f"form_edit_inm_{inv_id}"):
         importe = st.number_input("Importe (€)", min_value=0.0, value=float(inv.get("importe", 0) or 0), step=5000.0, key=f"ei_imp_{inv_id}")
+        valoracion = st.number_input("Valoración (€)", min_value=0.0, value=float(inv.get("valoracion", 0) or 0), step=5000.0, key=f"ei_val_{inv_id}", help="Valor de mercado o tasación; se compara con el precio para mostrar si está por encima o por debajo.")
         localizacion = st.text_input("Localización", value=inv.get("localizacion", "") or "", key=f"ei_loc_{inv_id}")
         ano_construccion = st.number_input("Año construcción", min_value=1800, max_value=2030, value=int(inv.get("ano_construccion", 0) or 0), step=1, key=f"ei_ano_{inv_id}")
         m2_construidos = st.number_input("m² construidos", min_value=0.0, value=float(inv.get("m2_construidos", 0) or 0), step=1.0, key=f"ei_m2c_{inv_id}")
@@ -1570,7 +1571,7 @@ def _editor_inmueble(usuario_id: int, inv: dict):
         if st.form_submit_button("Guardar cambios"):
             cert_consumo_final = _letra_desde_consumo_kwh_m2(consumo_exacto_input) if consumo_exacto_input > 0 else (certificado_consumo if certificado_consumo != "—" else "")
             cert_emisiones_final = _letra_desde_emisiones_kg_m2(emisiones_exactas_input) if emisiones_exactas_input > 0 else (certificado_emisiones if certificado_emisiones != "—" else "")
-            inv_act = {**inv, "importe": importe, "localizacion": localizacion, "ano_construccion": int(ano_construccion), "m2_construidos": m2_construidos, "m2_utiles": m2_utiles, "superficie_placas_m2": float(superficie_placas_m2), "habitaciones": int(habitaciones), "banos": int(banos), "certificado_consumo": cert_consumo_final, "certificado_emisiones": cert_emisiones_final, "consumo_exacto_kwh_m2": float(consumo_exacto_input), "emisiones_exactas_kg_m2": float(emisiones_exactas_input), "zona_climatica_cte": zona_climatica_cte if zona_climatica_cte != "—" else "", "notas": (notas or "").strip(), "piscina": piscina, "sotano": sotano, "placas_solares": placas_solares, "inmobiliaria": inmobiliaria, "comision_venta_pct": comision_venta_pct, "url_anuncio": url_anuncio.strip(), "url_inmobiliaria": url_inmobiliaria.strip(), "categoria": categoria}
+            inv_act = {**inv, "importe": importe, "valoracion": float(valoracion), "localizacion": localizacion, "ano_construccion": int(ano_construccion), "m2_construidos": m2_construidos, "m2_utiles": m2_utiles, "superficie_placas_m2": float(superficie_placas_m2), "habitaciones": int(habitaciones), "banos": int(banos), "certificado_consumo": cert_consumo_final, "certificado_emisiones": cert_emisiones_final, "consumo_exacto_kwh_m2": float(consumo_exacto_input), "emisiones_exactas_kg_m2": float(emisiones_exactas_input), "zona_climatica_cte": zona_climatica_cte if zona_climatica_cte != "—" else "", "notas": (notas or "").strip(), "piscina": piscina, "sotano": sotano, "placas_solares": placas_solares, "inmobiliaria": inmobiliaria, "comision_venta_pct": comision_venta_pct, "url_anuncio": url_anuncio.strip(), "url_inmobiliaria": url_inmobiliaria.strip(), "categoria": categoria}
             if ghd.actualizar_inmueble(usuario_id, inv_act):
                 st.success("Inmueble actualizado.")
                 st.rerun()
@@ -1593,6 +1594,7 @@ def agenda_inmuebles(usuario_id: int):
     st.caption("Alta de viviendas a comparar. En cada ficha puedes usar «Obtener / Recargar imágenes» desde el anuncio Idealista y/o la URL de la inmobiliaria para elegir qué imágenes añadir.")
     with st.form("form_inmueble"):
         importe = st.number_input("Importe de la vivienda (€) *", min_value=0.0, value=150000.0, step=5000.0)
+        valoracion = st.number_input("Valoración (€)", min_value=0.0, value=0.0, step=5000.0, help="Valor de mercado o tasación (opcional); se compara con el precio en la ficha.")
         localizacion = st.text_input("Localización", placeholder="Ej: Madrid, zona Norte")
         ano_construccion = st.number_input("Año de construcción", min_value=1800, max_value=2030, value=2000, step=1)
         m2_construidos = st.number_input("m² construidos", min_value=0.0, value=90.0, step=1.0)
@@ -1632,6 +1634,7 @@ def agenda_inmuebles(usuario_id: int):
             cert_emisiones_alta = _letra_desde_emisiones_kg_m2(emisiones_exactas_alta) if emisiones_exactas_alta > 0 else (certificado_emisiones if certificado_emisiones != "—" else "")
             inv = {
                 "importe": float(importe),
+                "valoracion": float(valoracion),
                 "localizacion": (localizacion or "").strip(),
                 "ano_construccion": int(ano_construccion),
                 "m2_construidos": float(m2_construidos),
@@ -1830,6 +1833,16 @@ def agenda_inmuebles(usuario_id: int):
                         st.caption(f"📝 **Notas:** {inv.get('notas')}")
                     d = _desglose_gastos_compra(inv)
                     st.caption(f"Coste total compra: **{d['total']:.0f} €** (precio + comisión + ITP {ITP_PCT}% + notaría + registro + gestoría {GESTORIA_EUR:.0f} €)")
+                    valoracion_eur = float(inv.get("valoracion", 0) or 0)
+                    if valoracion_eur > 0:
+                        precio_eur = float(inv.get("importe", 0) or 0)
+                        diff = valoracion_eur - precio_eur
+                        if diff < 0:
+                            st.markdown(f'<span style="color: #b91c1c; font-weight: bold;">⚠️ Por encima del valor de mercado</span> — Precio {precio_eur:.0f} € &gt; valoración {valoracion_eur:.0f} € (diferencia {abs(diff):.0f} €).', unsafe_allow_html=True)
+                        elif diff > 0:
+                            st.markdown(f'<span style="color: #15803d; font-weight: bold;">✓ Por debajo del valor de mercado</span> — Precio {precio_eur:.0f} € &lt; valoración {valoracion_eur:.0f} € (diferencia {diff:.0f} €).', unsafe_allow_html=True)
+                        else:
+                            st.caption(f"Precio y valoración coinciden: **{precio_eur:.0f} €**.")
                     if inv.get("url_anuncio") or inv.get("url_inmobiliaria"):
                         enlaces = []
                         if inv.get("url_anuncio"):
@@ -1973,6 +1986,7 @@ def _tab_comparador_inmuebles(usuario_id: int):
     filas = [
         ("Localización", lambda inv: _valor(inv, "localizacion")),
         ("Precio (€)", lambda inv: _valor(inv, "importe", lambda x: f"{float(x):.0f}")),
+        ("Valoración (€)", lambda inv: f"{float(inv.get('valoracion') or 0):.0f}" if float(inv.get("valoracion") or 0) > 0 else "—"),
         ("m² construidos", lambda inv: _valor(inv, "m2_construidos", lambda x: f"{float(x):.0f}")),
         ("m² útiles", lambda inv: _valor(inv, "m2_utiles", lambda x: f"{float(x):.0f}")),
         ("€/m²", lambda inv: f"{_precio_m2_inmueble(inv):.0f}" if _precio_m2_inmueble(inv) is not None else "—"),
