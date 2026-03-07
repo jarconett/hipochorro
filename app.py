@@ -2555,7 +2555,14 @@ def main():
     st.sidebar.markdown("---")
     st.sidebar.caption(f"**Hipochorro** v{VERSION_APP}")
 
-    tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs(["Alta de hipotecas", "Comparador", "Agenda inmuebles", "Comparador inmuebles", "¿Amortizar o Invertir?", "Info"])
+    tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
+        "📝 Alta de hipotecas",
+        "📊 Comparador",
+        "🏠 Agenda inmuebles",
+        "🏘️ Comparador inmuebles",
+        "💰 ¿Amortizar o Invertir?",
+        "ℹ️ Info",
+    ])
     with tab1:
         formulario_hipoteca(u["id"])
         st.markdown("---")
