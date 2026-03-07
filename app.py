@@ -59,7 +59,7 @@ HELP_TAE = (
 APIFY_TOKEN_SECRET = "APIFY_TOKEN_SECRET"
 
 # Versión de la aplicación (visible en sidebar y changelog)
-VERSION_APP = "1.10.0"
+VERSION_APP = "1.11.0"
 
 # Gastos de compra (sobre precio de la vivienda / ITP)
 ITP_PCT = 7.0           # Impuesto de Transmisiones Patrimoniales: % sobre precio vivienda
@@ -1536,13 +1536,14 @@ def _editor_inmueble(usuario_id: int, inv: dict):
         with col4:
             inmobiliaria = st.checkbox("Venta por inmobiliaria", value=bool(inv.get("inmobiliaria", False)), key=f"ei_inm_{inv_id}")
         comision_venta_pct = st.number_input("% comisión venta (inmobiliaria)", min_value=0.0, max_value=20.0, value=float(inv.get("comision_venta_pct", 0) or 0), step=0.5, key=f"ei_com_{inv_id}")
-        url_anuncio = st.text_input("URL del anuncio", value=inv.get("url_anuncio", "") or "", key=f"ei_url_{inv_id}")
+        url_anuncio = st.text_input("URL del anuncio Idealista", value=inv.get("url_anuncio", "") or "", key=f"ei_url_{inv_id}", placeholder="https://www.idealista.com/...")
+        url_inmobiliaria = st.text_input("URL inmobiliaria", value=inv.get("url_inmobiliaria", "") or "", key=f"ei_url_inm_{inv_id}", placeholder="https://...", help="Web propia de la inmobiliaria con el anuncio; suele permitir extraer las imágenes con más facilidad.")
         cat_actual = _categoria_inmueble(inv)
         categoria = st.radio("Categoría", CATEGORIAS_INMUEBLE, horizontal=True, index=CATEGORIAS_INMUEBLE.index(cat_actual) if cat_actual in CATEGORIAS_INMUEBLE else 0, key=f"ei_cat_{inv_id}")
         if st.form_submit_button("Guardar cambios"):
             cert_consumo_final = _letra_desde_consumo_kwh_m2(consumo_exacto_input) if consumo_exacto_input > 0 else (certificado_consumo if certificado_consumo != "—" else "")
             cert_emisiones_final = _letra_desde_emisiones_kg_m2(emisiones_exactas_input) if emisiones_exactas_input > 0 else (certificado_emisiones if certificado_emisiones != "—" else "")
-            inv_act = {**inv, "importe": importe, "localizacion": localizacion, "ano_construccion": int(ano_construccion), "m2_construidos": m2_construidos, "m2_utiles": m2_utiles, "superficie_placas_m2": float(superficie_placas_m2), "habitaciones": int(habitaciones), "banos": int(banos), "certificado_consumo": cert_consumo_final, "certificado_emisiones": cert_emisiones_final, "consumo_exacto_kwh_m2": float(consumo_exacto_input), "emisiones_exactas_kg_m2": float(emisiones_exactas_input), "zona_climatica_cte": zona_climatica_cte if zona_climatica_cte != "—" else "", "notas": (notas or "").strip(), "piscina": piscina, "sotano": sotano, "placas_solares": placas_solares, "inmobiliaria": inmobiliaria, "comision_venta_pct": comision_venta_pct, "url_anuncio": url_anuncio.strip(), "categoria": categoria}
+            inv_act = {**inv, "importe": importe, "localizacion": localizacion, "ano_construccion": int(ano_construccion), "m2_construidos": m2_construidos, "m2_utiles": m2_utiles, "superficie_placas_m2": float(superficie_placas_m2), "habitaciones": int(habitaciones), "banos": int(banos), "certificado_consumo": cert_consumo_final, "certificado_emisiones": cert_emisiones_final, "consumo_exacto_kwh_m2": float(consumo_exacto_input), "emisiones_exactas_kg_m2": float(emisiones_exactas_input), "zona_climatica_cte": zona_climatica_cte if zona_climatica_cte != "—" else "", "notas": (notas or "").strip(), "piscina": piscina, "sotano": sotano, "placas_solares": placas_solares, "inmobiliaria": inmobiliaria, "comision_venta_pct": comision_venta_pct, "url_anuncio": url_anuncio.strip(), "url_inmobiliaria": url_inmobiliaria.strip(), "categoria": categoria}
             if ghd.actualizar_inmueble(usuario_id, inv_act):
                 st.success("Inmueble actualizado.")
                 st.rerun()
@@ -1562,7 +1563,7 @@ def _editor_inmueble(usuario_id: int, inv: dict):
 def agenda_inmuebles(usuario_id: int):
     """Pestaña agenda de inmuebles: alta, listado y fotos desde URL."""
     st.subheader("Agenda de inmuebles")
-    st.caption("Alta de viviendas a comparar. En cada ficha puedes usar «Obtener fotos desde anuncio» (URL del anuncio) y elegir qué imágenes añadir.")
+    st.caption("Alta de viviendas a comparar. En cada ficha puedes usar «Obtener / Recargar imágenes» desde el anuncio Idealista y/o la URL de la inmobiliaria para elegir qué imágenes añadir.")
     with st.form("form_inmueble"):
         importe = st.number_input("Importe de la vivienda (€) *", min_value=0.0, value=150000.0, step=5000.0)
         localizacion = st.text_input("Localización", placeholder="Ej: Madrid, zona Norte")
@@ -1596,7 +1597,8 @@ def agenda_inmuebles(usuario_id: int):
         tipo_venta = st.radio("Tipo de venta", ["Particular", "Inmobiliaria"], horizontal=True)
         inmobiliaria = tipo_venta == "Inmobiliaria"
         comision_venta_pct = st.number_input("% comisión por la venta (solo inmobiliaria)", min_value=0.0, max_value=20.0, value=3.0, step=0.5)
-        url_anuncio = st.text_input("URL del anuncio (portal inmobiliario)", placeholder="https://...")
+        url_anuncio = st.text_input("URL del anuncio Idealista", placeholder="https://www.idealista.com/...")
+        url_inmobiliaria = st.text_input("URL inmobiliaria", placeholder="https://...", help="Web de la inmobiliaria con el anuncio; suele permitir listar las imágenes con más facilidad.")
         categoria = st.radio("Categoría", CATEGORIAS_INMUEBLE, horizontal=True, index=0)
         if st.form_submit_button("Dar de alta inmueble"):
             cert_consumo_alta = _letra_desde_consumo_kwh_m2(consumo_exacto_alta) if consumo_exacto_alta > 0 else (certificado_consumo if certificado_consumo != "—" else "")
@@ -1622,12 +1624,13 @@ def agenda_inmuebles(usuario_id: int):
                 "inmobiliaria": bool(inmobiliaria),
                 "comision_venta_pct": float(comision_venta_pct) if inmobiliaria else 0.0,
                 "url_anuncio": (url_anuncio or "").strip(),
+                "url_inmobiliaria": (url_inmobiliaria or "").strip(),
                 "categoria": categoria,
                 "fecha_creacion": datetime.now().isoformat(),
             }
             nuevo = ghd.añadir_inmueble(usuario_id, inv)
             if nuevo:
-                st.success("Inmueble dado de alta. Abre su ficha y usa «Obtener fotos desde anuncio» para elegir las imágenes.")
+                st.success("Inmueble dado de alta. Abre su ficha y usa «Obtener / Recargar imágenes» para elegir las fotos desde Idealista y/o la web de la inmobiliaria.")
                 st.rerun()
             else:
                 st.error("Error al guardar. ¿GITHUB_TOKEN configurado?")
@@ -1800,8 +1803,13 @@ def agenda_inmuebles(usuario_id: int):
                         st.caption(f"📝 **Notas:** {inv.get('notas')}")
                     d = _desglose_gastos_compra(inv)
                     st.caption(f"Coste total compra: **{d['total']:.0f} €** (precio + comisión + ITP {ITP_PCT}% + notaría + registro + gestoría {GESTORIA_EUR:.0f} €)")
-                    if inv.get("url_anuncio"):
-                        st.markdown(f"[Ver anuncio]({inv['url_anuncio']})")
+                    if inv.get("url_anuncio") or inv.get("url_inmobiliaria"):
+                        enlaces = []
+                        if inv.get("url_anuncio"):
+                            enlaces.append(f"[Ver anuncio Idealista]({inv['url_anuncio']})")
+                        if inv.get("url_inmobiliaria"):
+                            enlaces.append(f"[Ver web inmobiliaria]({inv['url_inmobiliaria']})")
+                        st.markdown(" · ".join(enlaces))
                     # Mapa: comprobar geocodificación y permitir recolocar el pin y guardar coordenadas
                     if folium is not None and st_folium is not None and inv_id is not None:
                         st.markdown("**Mapa** (haz clic en el mapa para recolocar el pin)")
@@ -1843,35 +1851,29 @@ def agenda_inmuebles(usuario_id: int):
                                         st.rerun()
                                     else:
                                         st.error("Error al guardar.")
-                    # Obtener fotos desde URL y que el usuario elija cuáles añadir
-                    if inv.get("url_anuncio"):
-                        if "idealista" in (inv.get("url_anuncio") or "").lower():
-                            st.caption("Idealista suele bloquear peticiones directas (403). Configura **APIFY_TOKEN** o **ZENROWS_API_KEY** en secrets (ver `docs/IDEALISTA_SCRAPING.md`).")
-                        col_obt, col_rec = st.columns(2)
-                        with col_obt:
-                            if st.button("🖼 Obtener fotos desde anuncio", key=f"btn_obt_fotos_{inv_id}"):
-                                try:
-                                    with st.spinner("Extrayendo imágenes del anuncio…"):
-                                        urls = extraer_urls_imagenes_anuncio(inv["url_anuncio"])
-                                    if urls:
-                                        st.session_state.fotos_extraidas = {"inmueble_id": inv_id, "urls": urls}
-                                    else:
-                                        st.warning("No se encontraron imágenes en el anuncio o el portal no permite extraerlas.")
-                                except ValueError as e:
-                                    st.error(str(e))
-                                st.rerun()
-                        with col_rec:
-                            if "idealista" in (inv.get("url_anuncio") or "").lower() and st.button("🔄 Recargar imágenes desde Idealista", key=f"btn_recargar_fotos_{inv_id}", help="Vuelve a extraer las imágenes del anuncio de Idealista."):
-                                try:
-                                    with st.spinner("Recargando imágenes desde Idealista…"):
-                                        urls = extraer_urls_imagenes_anuncio(inv["url_anuncio"])
-                                    if urls:
-                                        st.session_state.fotos_extraidas = {"inmueble_id": inv_id, "urls": urls}
-                                    else:
-                                        st.warning("No se encontraron imágenes en el anuncio.")
-                                except ValueError as e:
-                                    st.error(str(e))
-                                st.rerun()
+                    # Obtener fotos desde URL(s): Idealista y/o web inmobiliaria
+                    if inv.get("url_anuncio") or inv.get("url_inmobiliaria"):
+                        if inv.get("url_anuncio") and "idealista" in (inv.get("url_anuncio") or "").lower():
+                            st.caption("Idealista suele bloquear peticiones directas (403). Configura **APIFY_TOKEN** o **ZENROWS_API_KEY** en secrets. La **URL inmobiliaria** suele permitir extraer las imágenes con más facilidad.")
+                        if st.button("🖼 Obtener / Recargar imágenes", key=f"btn_obt_fotos_{inv_id}", help="Extrae imágenes del anuncio Idealista y/o de la URL de la inmobiliaria. Selecciona luego las que quieras añadir a la ficha."):
+                            try:
+                                todas_urls = []
+                                if inv.get("url_anuncio"):
+                                    with st.spinner("Extrayendo imágenes del anuncio Idealista…"):
+                                        u1 = extraer_urls_imagenes_anuncio(inv["url_anuncio"])
+                                        todas_urls.extend(u1)
+                                if inv.get("url_inmobiliaria"):
+                                    with st.spinner("Extrayendo imágenes de la web inmobiliaria…"):
+                                        u2 = extraer_urls_imagenes_anuncio(inv["url_inmobiliaria"])
+                                        todas_urls.extend(u2)
+                                urls = list(dict.fromkeys(todas_urls))
+                                if urls:
+                                    st.session_state.fotos_extraidas = {"inmueble_id": inv_id, "urls": urls}
+                                else:
+                                    st.warning("No se encontraron imágenes en ninguna de las URLs indicadas.")
+                            except ValueError as e:
+                                st.error(str(e))
+                            st.rerun()
                     fotos_extraidas = st.session_state.get("fotos_extraidas")
                     if fotos_extraidas and fotos_extraidas.get("inmueble_id") == inv_id and fotos_extraidas.get("urls"):
                         urls_list = fotos_extraidas["urls"]
@@ -2539,6 +2541,7 @@ def main():
         st.subheader("Changelog")
         st.markdown(f"**Versión actual: {VERSION_APP}**")
         st.markdown("""
+        - **1.11.0** — Inmuebles: superficie disponible para placas solares (m²) en alta y ficha; leyenda con nº de placas, reducción teórica y apta/no apta para subvención; indicador ⚡ en títulos (sidebar y listado). Certificado energético: valores exactos de consumo (kWh/m²·año) y emisiones (kg CO₂/m²·año) con asignación automática de letra; si no se indica valor exacto se usa el valor medio del rango. Zonas climáticas CTE en módulo y datos (import opcional). Scraper Idealista: extracción de todas las imágenes (listas de objetos y estructuras anidadas en ZenRows/Apify). Botón «Recargar imágenes desde Idealista» en cada ficha.
         - **1.10.0** — Rediseño UI: tema profesional en `.streamlit/config.toml` (colores claro/oscuro, Plus Jakarta Sans), CSS global (espaciado, expanders tipo card, focus visible, tabular-nums en métricas).
         - **1.9.0** — Nueva pestaña «¿Amortizar o Invertir?»: selección de hipoteca, importe de amortización anual, comisiones bonificadas o estándar; comparativa con depósito/fondo (dinero invertido y % rendimiento o importe obtenido); retención por rentas del ahorro (tramos España 19–26 %); comparativa visual amortizar vs invertir.
         - **1.8.0** — Sección GPS en sidebar: ciudad de destino (por defecto Motril, Granada) para rutas por carretera; duración en minutos como criterio de ordenación en la agenda; botón «Calcular rutas a destino». Visor de mapa en cada ficha de inmueble (Folium): pin para comprobar geocodificación, clic en el mapa para recolocar el pin, botón «Guardar coordenadas» para persistir lat/lon en la ficha.
