@@ -45,6 +45,9 @@ HELP_TAE = (
 # En Streamlit Cloud: Settings → Secrets → clave "APIFY_TOKEN_SECRET" con tu API token de apify.com
 APIFY_TOKEN_SECRET = "APIFY_TOKEN_SECRET"
 
+# Versión de la aplicación (visible en sidebar y changelog)
+VERSION_APP = "1.6.0"
+
 # Gastos de compra (sobre precio de la vivienda / ITP)
 ITP_PCT = 7.0           # Impuesto de Transmisiones Patrimoniales: % sobre precio vivienda
 NOTARIA_PCT_DEL_ITP = 10.0   # Notaría: % del importe del ITP
@@ -332,6 +335,49 @@ def _titulo_inmueble(inv: dict) -> str:
     return f"{loc} — {imp:,.0f} €"
 
 
+# Estilo para resaltar en rojo campos de comisiones/costes
+_CSS_COMISION = '<span style="color:#c33; font-weight:bold;">'
+
+# Estilo para resaltar en verde campos de bonificaciones
+_CSS_BONIFICACION = '<span style="color:#083; font-weight:bold;">'
+
+
+def _campo_bonificacion(label: str, value: float | int = 0, min_value: float | int = 0, max_value: int | None = None, step: float | int = 1, format_str: str | None = None, key: str | None = None, help_text: str | None = None):
+    """Renderiza etiqueta en verde y número input con barra lateral verde (bonificaciones)."""
+    col_bar, col_c = st.columns([0.012, 0.988])
+    with col_bar:
+        st.markdown('<div style="background:#083; min-height:52px; margin-top:6px; border-radius:2px;"></div>', unsafe_allow_html=True)
+    with col_c:
+        st.markdown(f'{_CSS_BONIFICACION}{label}</span>', unsafe_allow_html=True)
+        kwargs = {"min_value": min_value, "value": value, "step": step}
+        if max_value is not None:
+            kwargs["max_value"] = max_value
+        if format_str is not None:
+            kwargs["format"] = format_str
+        if key is not None:
+            kwargs["key"] = key
+        if help_text is not None:
+            kwargs["help"] = help_text
+        return st.number_input("", **kwargs)
+
+
+def _campo_comision(label: str, value: float = 0.0, min_value: float = 0.0, step: float = 1.0, format_str: str | None = None, key: str | None = None, help_text: str | None = None):
+    """Renderiza etiqueta en rojo y número input con barra lateral roja (comisiones/costes)."""
+    col_bar, col_c = st.columns([0.012, 0.988])
+    with col_bar:
+        st.markdown('<div style="background:#c33; min-height:52px; margin-top:6px; border-radius:2px;"></div>', unsafe_allow_html=True)
+    with col_c:
+        st.markdown(f'{_CSS_COMISION}{label}</span>', unsafe_allow_html=True)
+        kwargs = {"min_value": min_value, "value": value, "step": step}
+        if format_str is not None:
+            kwargs["format"] = format_str
+        if key is not None:
+            kwargs["key"] = key
+        if help_text is not None:
+            kwargs["help"] = help_text
+        return st.number_input("", **kwargs)
+
+
 def formulario_hipoteca(usuario_id: int):
     """Formulario de alta de hipoteca con todos los campos."""
     st.subheader("Alta de hipoteca bancaria")
@@ -361,62 +407,39 @@ def formulario_hipoteca(usuario_id: int):
         tae = st.number_input("% TAE *", min_value=0.0, max_value=30.0, value=3.8, step=0.05, format="%.2f", help=HELP_TAE)
         st.markdown("---")
         st.caption("Comisiones y productos vinculados")
-        meses_tin_bonificado = st.number_input(
-            "Meses con TIN bonificado al inicio",
-            min_value=0,
-            max_value=480,
-            value=0,
-            step=1,
-        )
-        anos_bonif_amort_parcial = st.number_input(
-            "Años con comisión de amortización parcial bonificada",
-            min_value=0,
-            max_value=40,
-            value=0,
-            step=1,
-        )
-        comision_amort_parcial_bonif = st.number_input(
-            "Comisión amortización parcial bonificada (%)",
-            min_value=0.0,
-            value=0.0,
-            step=0.1,
-            format="%.2f",
-        )
-        comision_amort_parcial = st.number_input(
-            "Comisión amortización parcial estándar (%)",
-            min_value=0.0,
-            value=0.0,
-            step=0.1,
-            format="%.2f",
-        )
-        mantenimiento = st.number_input("Mantenimiento cuenta (€/año)", min_value=0.0, value=0.0, step=10.0)
-        mantenimiento_tarjeta = st.number_input("Mantenimiento tarjeta (€/año)", min_value=0.0, value=0.0, step=10.0)
-        tasacion = st.number_input("Tasación (€)", min_value=0.0, value=0.0, step=50.0)
-        bonificacion_firma = st.number_input("Importe bonificado en la firma (€)", min_value=0.0, value=0.0, step=100.0, help="El banco lo abona una sola vez en la firma; reduce el coste total.")
-        bonif_nomina_eur = st.number_input("Bonificación nómina (descuento €/año)", min_value=0.0, value=0.0, step=50.0)
-        bonif_tin_nomina_pp = st.number_input("Bonif. TIN por nómina (p.p.)", min_value=0.0, value=0.0, step=0.05, format="%.2f")
-        anos_bonif_nomina = st.number_input("Años bonif. nómina (0 = todo el préstamo)", min_value=0, max_value=40, value=0, step=1)
-        seguro_hogar = st.number_input("Seguro hogar (€/año)", min_value=0.0, value=0.0, step=20.0)
-        bonif_tin_seguro_hogar_pp = st.number_input("Bonif. TIN por seguro hogar (p.p.)", min_value=0.0, value=0.0, step=0.05, format="%.2f")
-        anos_bonif_seguro_hogar = st.number_input("Años bonif. seguro hogar (0 = todo)", min_value=0, max_value=40, value=0, step=1)
-        seguro_vida = st.number_input("Seguro vida (€/año)", min_value=0.0, value=0.0, step=20.0)
-        bonif_tin_seguro_vida_pp = st.number_input("Bonif. TIN por seguro vida (p.p.)", min_value=0.0, value=0.0, step=0.05, format="%.2f")
-        anos_bonif_seguro_vida = st.number_input("Años bonif. seguro vida (0 = todo)", min_value=0, max_value=40, value=0, step=1)
-        alarma = st.number_input("Alarma (€/año)", min_value=0.0, value=0.0, step=20.0)
-        bonif_tin_alarma_pp = st.number_input("Bonif. TIN por alarma (p.p.)", min_value=0.0, value=0.0, step=0.05, format="%.2f")
-        anos_bonif_alarma = st.number_input("Años bonif. alarma (0 = todo)", min_value=0, max_value=40, value=0, step=1)
-        proteccion_pagos = st.number_input("Protección de pagos (€/año)", min_value=0.0, value=0.0, step=20.0)
-        bonif_tin_proteccion_pagos_pp = st.number_input("Bonif. TIN por protección pagos (p.p.)", min_value=0.0, value=0.0, step=0.05, format="%.2f")
-        anos_bonif_proteccion_pagos = st.number_input("Años bonif. protección pagos (0 = todo)", min_value=0, max_value=40, value=0, step=1)
-        pension = st.number_input("Pensión (€/año)", min_value=0.0, value=0.0, step=20.0)
-        bonif_tin_pension_pp = st.number_input("Bonif. TIN por pensión (p.p.)", min_value=0.0, value=0.0, step=0.05, format="%.2f")
-        anos_bonif_pension = st.number_input("Años bonif. pensión (0 = todo)", min_value=0, max_value=40, value=0, step=1)
+        meses_tin_bonificado = _campo_bonificacion("Meses con TIN bonificado al inicio", value=0, min_value=0, max_value=480, step=1)
+        anos_bonif_amort_parcial = _campo_bonificacion("Años con comisión de amortización parcial bonificada", value=0, min_value=0, max_value=40, step=1)
+        comision_amort_parcial_bonif = _campo_bonificacion("Comisión amortización parcial bonificada (%)", value=0.0, min_value=0.0, step=0.1, format_str="%.2f")
+        comision_amort_parcial = _campo_comision("Comisión amortización parcial estándar (%)", value=0.0, min_value=0.0, step=0.1, format_str="%.2f")
+        mantenimiento = _campo_comision("Mantenimiento cuenta (€/año)", value=0.0, step=10.0)
+        mantenimiento_tarjeta = _campo_comision("Mantenimiento tarjeta (€/año)", value=0.0, step=10.0)
+        tasacion = _campo_comision("Tasación (€)", value=0.0, step=50.0)
+        comision_apertura = _campo_comision("Comisión de apertura (€)", value=0.0, step=50.0, help_text="Comisión que cobra el banco al formalizar la hipoteca (una sola vez).")
+        bonificacion_firma = _campo_bonificacion("Importe bonificado en la firma (€)", value=0.0, step=100.0, help_text="El banco lo abona una sola vez en la firma; reduce el coste total.")
+        bonif_nomina_eur = _campo_bonificacion("Bonificación nómina (descuento €/año)", value=0.0, step=50.0)
+        bonif_tin_nomina_pp = _campo_bonificacion("Bonif. TIN por nómina (p.p.)", value=0.0, step=0.05, format_str="%.2f")
+        anos_bonif_nomina = _campo_bonificacion("Años bonif. nómina (0 = todo el préstamo)", value=0, min_value=0, max_value=40, step=1)
+        seguro_hogar = _campo_comision("Seguro hogar (€/año)", value=0.0, step=20.0)
+        bonif_tin_seguro_hogar_pp = _campo_bonificacion("Bonif. TIN por seguro hogar (p.p.)", value=0.0, step=0.05, format_str="%.2f")
+        anos_bonif_seguro_hogar = _campo_bonificacion("Años bonif. seguro hogar (0 = todo)", value=0, min_value=0, max_value=40, step=1)
+        seguro_vida = _campo_comision("Seguro vida (€/año)", value=0.0, step=20.0)
+        bonif_tin_seguro_vida_pp = _campo_bonificacion("Bonif. TIN por seguro vida (p.p.)", value=0.0, step=0.05, format_str="%.2f")
+        anos_bonif_seguro_vida = _campo_bonificacion("Años bonif. seguro vida (0 = todo)", value=0, min_value=0, max_value=40, step=1)
+        alarma = _campo_comision("Alarma (€/año)", value=0.0, step=20.0)
+        bonif_tin_alarma_pp = _campo_bonificacion("Bonif. TIN por alarma (p.p.)", value=0.0, step=0.05, format_str="%.2f")
+        anos_bonif_alarma = _campo_bonificacion("Años bonif. alarma (0 = todo)", value=0, min_value=0, max_value=40, step=1)
+        proteccion_pagos = _campo_comision("Protección de pagos (€/año)", value=0.0, step=20.0)
+        bonif_tin_proteccion_pagos_pp = _campo_bonificacion("Bonif. TIN por protección pagos (p.p.)", value=0.0, step=0.05, format_str="%.2f")
+        anos_bonif_proteccion_pagos = _campo_bonificacion("Años bonif. protección pagos (0 = todo)", value=0, min_value=0, max_value=40, step=1)
+        pension = _campo_comision("Pensión (€/año)", value=0.0, step=20.0)
+        bonif_tin_pension_pp = _campo_bonificacion("Bonif. TIN por pensión (p.p.)", value=0.0, step=0.05, format_str="%.2f")
+        anos_bonif_pension = _campo_bonificacion("Años bonif. pensión (0 = todo)", value=0, min_value=0, max_value=40, step=1)
         bizum = st.checkbox("Bizum vinculado")
-        bonif_tin_bizum_pp = st.number_input("Bonif. TIN por Bizum (p.p.)", min_value=0.0, value=0.0, step=0.05, format="%.2f")
-        anos_bonif_bizum = st.number_input("Años bonif. Bizum (0 = todo)", min_value=0, max_value=40, value=0, step=1)
+        bonif_tin_bizum_pp = _campo_bonificacion("Bonif. TIN por Bizum (p.p.)", value=0.0, step=0.05, format_str="%.2f")
+        anos_bonif_bizum = _campo_bonificacion("Años bonif. Bizum (0 = todo)", value=0, min_value=0, max_value=40, step=1)
         tarjeta_credito = st.checkbox("Tarjeta de crédito vinculada")
-        bonif_tin_tarjeta_pp = st.number_input("Bonif. TIN por tarjeta (p.p.)", min_value=0.0, value=0.0, step=0.05, format="%.2f")
-        anos_bonif_tarjeta = st.number_input("Años bonif. tarjeta (0 = todo)", min_value=0, max_value=40, value=0, step=1)
+        bonif_tin_tarjeta_pp = _campo_bonificacion("Bonif. TIN por tarjeta (p.p.)", value=0.0, step=0.05, format_str="%.2f")
+        anos_bonif_tarjeta = _campo_bonificacion("Años bonif. tarjeta (0 = todo)", value=0, min_value=0, max_value=40, step=1)
 
         submitted = st.form_submit_button("Guardar hipoteca")
         if submitted and nombre_entidad and nombre_hipoteca:
@@ -446,6 +469,7 @@ def formulario_hipoteca(usuario_id: int):
                 "mantenimiento": float(mantenimiento),
                 "mantenimiento_tarjeta": float(mantenimiento_tarjeta),
                 "tasacion": float(tasacion),
+                "comision_apertura": float(comision_apertura),
                 "bonificacion_firma": float(bonificacion_firma),
                 "bonif_nomina_eur": float(bonif_nomina_eur),
                 "seguro_hogar": float(seguro_hogar),
@@ -528,66 +552,39 @@ def _editor_hipoteca(usuario_id: int, h: dict):
 
         st.markdown("---")
         st.caption("Comisiones y productos vinculados")
-        meses_tin_bonificado = st.number_input(
-            "Meses con TIN bonificado al inicio",
-            min_value=0,
-            max_value=480,
-            value=int(h.get("meses_tin_bonificado", 0) or 0),
-            step=1,
-            key=f"e_mes_tin_bonif_{hid}",
-        )
-        anos_bonif_amort_parcial = st.number_input(
-            "Años con comisión de amortización parcial bonificada",
-            min_value=0,
-            max_value=40,
-            value=int(h.get("anos_bonif_amort_parcial", 0) or 0),
-            step=1,
-            key=f"e_anos_bonif_amort_{hid}",
-        )
-        comision_amort_parcial_bonif = st.number_input(
-            "Comisión amortización parcial bonificada (%)",
-            min_value=0.0,
-            value=float(h.get("comision_amort_parcial_bonif", 0) or 0),
-            step=0.1,
-            format="%.2f",
-            key=f"e_com_bonif_{hid}",
-        )
-        comision_amort_parcial = st.number_input(
-            "Comisión amortización parcial estándar (%)",
-            min_value=0.0,
-            value=float(h.get("comision_amort_parcial", 0) or 0),
-            step=0.1,
-            format="%.2f",
-            key=f"e_com_{hid}",
-        )
-        mantenimiento = st.number_input("Mantenimiento cuenta (€/año)", min_value=0.0, value=float(h.get("mantenimiento", 0) or 0), step=10.0, key=f"e_man_{hid}")
-        mantenimiento_tarjeta = st.number_input("Mantenimiento tarjeta (€/año)", min_value=0.0, value=float(h.get("mantenimiento_tarjeta", 0) or 0), step=10.0, key=f"e_man_tar_{hid}")
-        tasacion = st.number_input("Tasación (€)", min_value=0.0, value=float(h.get("tasacion", 0) or 0), step=50.0, key=f"e_tas_{hid}")
-        bonificacion_firma = st.number_input("Importe bonificado en la firma (€)", min_value=0.0, value=float(h.get("bonificacion_firma", 0) or 0), step=100.0, key=f"e_bonif_firma_{hid}", help="El banco lo abona una sola vez en la firma; reduce el coste total.")
-        bonif_nomina_eur = st.number_input("Bonificación nómina (descuento €/año)", min_value=0.0, value=float(h.get("bonif_nomina_eur", h.get("bonif_nomina", 0) or 0)), step=50.0, key=f"e_bon_{hid}")
-        bonif_tin_nomina_pp = st.number_input("Bonif. TIN por nómina (p.p.)", min_value=0.0, value=float(h.get("bonif_tin_nomina_pp", 0) or 0), step=0.05, format="%.2f", key=f"e_bon_tin_nom_{hid}")
-        anos_bonif_nomina = st.number_input("Años bonif. nómina (0 = todo)", min_value=0, max_value=40, value=int(h.get("años_bonif_nomina", 0) or 0), step=1, key=f"e_ab_nom_{hid}")
-        seguro_hogar = st.number_input("Seguro hogar (€/año)", min_value=0.0, value=float(h.get("seguro_hogar", 0) or 0), step=20.0, key=f"e_sh_{hid}")
-        bonif_tin_seguro_hogar_pp = st.number_input("Bonif. TIN por seguro hogar (p.p.)", min_value=0.0, value=float(h.get("bonif_tin_seguro_hogar_pp", 0) or 0), step=0.05, format="%.2f", key=f"e_shb_{hid}")
-        anos_bonif_seguro_hogar = st.number_input("Años bonif. seguro hogar (0 = todo)", min_value=0, max_value=40, value=int(h.get("años_bonif_seguro_hogar", 0) or 0), step=1, key=f"e_ab_sh_{hid}")
-        seguro_vida = st.number_input("Seguro vida (€/año)", min_value=0.0, value=float(h.get("seguro_vida", 0) or 0), step=20.0, key=f"e_sv_{hid}")
-        bonif_tin_seguro_vida_pp = st.number_input("Bonif. TIN por seguro vida (p.p.)", min_value=0.0, value=float(h.get("bonif_tin_seguro_vida_pp", 0) or 0), step=0.05, format="%.2f", key=f"e_svb_{hid}")
-        anos_bonif_seguro_vida = st.number_input("Años bonif. seguro vida (0 = todo)", min_value=0, max_value=40, value=int(h.get("años_bonif_seguro_vida", 0) or 0), step=1, key=f"e_ab_sv_{hid}")
-        alarma = st.number_input("Alarma (€/año)", min_value=0.0, value=float(h.get("alarma", 0) or 0), step=20.0, key=f"e_ala_{hid}")
-        bonif_tin_alarma_pp = st.number_input("Bonif. TIN por alarma (p.p.)", min_value=0.0, value=float(h.get("bonif_tin_alarma_pp", 0) or 0), step=0.05, format="%.2f", key=f"e_alab_{hid}")
-        anos_bonif_alarma = st.number_input("Años bonif. alarma (0 = todo)", min_value=0, max_value=40, value=int(h.get("años_bonif_alarma", 0) or 0), step=1, key=f"e_ab_ala_{hid}")
-        proteccion_pagos = st.number_input("Protección de pagos (€/año)", min_value=0.0, value=float(h.get("proteccion_pagos", 0) or 0), step=20.0, key=f"e_pp_{hid}")
-        bonif_tin_proteccion_pagos_pp = st.number_input("Bonif. TIN por protección pagos (p.p.)", min_value=0.0, value=float(h.get("bonif_tin_proteccion_pagos_pp", 0) or 0), step=0.05, format="%.2f", key=f"e_ppb_{hid}")
-        anos_bonif_proteccion_pagos = st.number_input("Años bonif. protección pagos (0 = todo)", min_value=0, max_value=40, value=int(h.get("años_bonif_proteccion_pagos", 0) or 0), step=1, key=f"e_ab_pp_{hid}")
-        pension = st.number_input("Pensión (€/año)", min_value=0.0, value=float(h.get("pension", 0) or 0), step=20.0, key=f"e_pen_{hid}")
-        bonif_tin_pension_pp = st.number_input("Bonif. TIN por pensión (p.p.)", min_value=0.0, value=float(h.get("bonif_tin_pension_pp", 0) or 0), step=0.05, format="%.2f", key=f"e_penb_{hid}")
-        anos_bonif_pension = st.number_input("Años bonif. pensión (0 = todo)", min_value=0, max_value=40, value=int(h.get("años_bonif_pension", 0) or 0), step=1, key=f"e_ab_pen_{hid}")
+        meses_tin_bonificado = _campo_bonificacion("Meses con TIN bonificado al inicio", value=int(h.get("meses_tin_bonificado", 0) or 0), min_value=0, max_value=480, step=1, key=f"e_mes_tin_bonif_{hid}")
+        anos_bonif_amort_parcial = _campo_bonificacion("Años con comisión de amortización parcial bonificada", value=int(h.get("anos_bonif_amort_parcial", 0) or 0), min_value=0, max_value=40, step=1, key=f"e_anos_bonif_amort_{hid}")
+        comision_amort_parcial_bonif = _campo_bonificacion("Comisión amortización parcial bonificada (%)", value=float(h.get("comision_amort_parcial_bonif", 0) or 0), min_value=0.0, step=0.1, format_str="%.2f", key=f"e_com_bonif_{hid}")
+        comision_amort_parcial = _campo_comision("Comisión amortización parcial estándar (%)", value=float(h.get("comision_amort_parcial", 0) or 0), min_value=0.0, step=0.1, format_str="%.2f", key=f"e_com_{hid}")
+        mantenimiento = _campo_comision("Mantenimiento cuenta (€/año)", value=float(h.get("mantenimiento", 0) or 0), step=10.0, key=f"e_man_{hid}")
+        mantenimiento_tarjeta = _campo_comision("Mantenimiento tarjeta (€/año)", value=float(h.get("mantenimiento_tarjeta", 0) or 0), step=10.0, key=f"e_man_tar_{hid}")
+        tasacion = _campo_comision("Tasación (€)", value=float(h.get("tasacion", 0) or 0), step=50.0, key=f"e_tas_{hid}")
+        comision_apertura = _campo_comision("Comisión de apertura (€)", value=float(h.get("comision_apertura", 0) or 0), step=50.0, key=f"e_com_ap_{hid}", help_text="Comisión que cobra el banco al formalizar la hipoteca (una sola vez).")
+        bonificacion_firma = _campo_bonificacion("Importe bonificado en la firma (€)", value=float(h.get("bonificacion_firma", 0) or 0), step=100.0, key=f"e_bonif_firma_{hid}", help_text="El banco lo abona una sola vez en la firma; reduce el coste total.")
+        bonif_nomina_eur = _campo_bonificacion("Bonificación nómina (descuento €/año)", value=float(h.get("bonif_nomina_eur", h.get("bonif_nomina", 0) or 0)), step=50.0, key=f"e_bon_{hid}")
+        bonif_tin_nomina_pp = _campo_bonificacion("Bonif. TIN por nómina (p.p.)", value=float(h.get("bonif_tin_nomina_pp", 0) or 0), step=0.05, format_str="%.2f", key=f"e_bon_tin_nom_{hid}")
+        anos_bonif_nomina = _campo_bonificacion("Años bonif. nómina (0 = todo)", value=int(h.get("años_bonif_nomina", 0) or 0), min_value=0, max_value=40, step=1, key=f"e_ab_nom_{hid}")
+        seguro_hogar = _campo_comision("Seguro hogar (€/año)", value=float(h.get("seguro_hogar", 0) or 0), step=20.0, key=f"e_sh_{hid}")
+        bonif_tin_seguro_hogar_pp = _campo_bonificacion("Bonif. TIN por seguro hogar (p.p.)", value=float(h.get("bonif_tin_seguro_hogar_pp", 0) or 0), step=0.05, format_str="%.2f", key=f"e_shb_{hid}")
+        anos_bonif_seguro_hogar = _campo_bonificacion("Años bonif. seguro hogar (0 = todo)", value=int(h.get("años_bonif_seguro_hogar", 0) or 0), min_value=0, max_value=40, step=1, key=f"e_ab_sh_{hid}")
+        seguro_vida = _campo_comision("Seguro vida (€/año)", value=float(h.get("seguro_vida", 0) or 0), step=20.0, key=f"e_sv_{hid}")
+        bonif_tin_seguro_vida_pp = _campo_bonificacion("Bonif. TIN por seguro vida (p.p.)", value=float(h.get("bonif_tin_seguro_vida_pp", 0) or 0), step=0.05, format_str="%.2f", key=f"e_svb_{hid}")
+        anos_bonif_seguro_vida = _campo_bonificacion("Años bonif. seguro vida (0 = todo)", value=int(h.get("años_bonif_seguro_vida", 0) or 0), min_value=0, max_value=40, step=1, key=f"e_ab_sv_{hid}")
+        alarma = _campo_comision("Alarma (€/año)", value=float(h.get("alarma", 0) or 0), step=20.0, key=f"e_ala_{hid}")
+        bonif_tin_alarma_pp = _campo_bonificacion("Bonif. TIN por alarma (p.p.)", value=float(h.get("bonif_tin_alarma_pp", 0) or 0), step=0.05, format_str="%.2f", key=f"e_alab_{hid}")
+        anos_bonif_alarma = _campo_bonificacion("Años bonif. alarma (0 = todo)", value=int(h.get("años_bonif_alarma", 0) or 0), min_value=0, max_value=40, step=1, key=f"e_ab_ala_{hid}")
+        proteccion_pagos = _campo_comision("Protección de pagos (€/año)", value=float(h.get("proteccion_pagos", 0) or 0), step=20.0, key=f"e_pp_{hid}")
+        bonif_tin_proteccion_pagos_pp = _campo_bonificacion("Bonif. TIN por protección pagos (p.p.)", value=float(h.get("bonif_tin_proteccion_pagos_pp", 0) or 0), step=0.05, format_str="%.2f", key=f"e_ppb_{hid}")
+        anos_bonif_proteccion_pagos = _campo_bonificacion("Años bonif. protección pagos (0 = todo)", value=int(h.get("años_bonif_proteccion_pagos", 0) or 0), min_value=0, max_value=40, step=1, key=f"e_ab_pp_{hid}")
+        pension = _campo_comision("Pensión (€/año)", value=float(h.get("pension", 0) or 0), step=20.0, key=f"e_pen_{hid}")
+        bonif_tin_pension_pp = _campo_bonificacion("Bonif. TIN por pensión (p.p.)", value=float(h.get("bonif_tin_pension_pp", 0) or 0), step=0.05, format_str="%.2f", key=f"e_penb_{hid}")
+        anos_bonif_pension = _campo_bonificacion("Años bonif. pensión (0 = todo)", value=int(h.get("años_bonif_pension", 0) or 0), min_value=0, max_value=40, step=1, key=f"e_ab_pen_{hid}")
         bizum = st.checkbox("Bizum vinculado", value=bool(h.get("bizum", False)), key=f"e_biz_{hid}")
-        bonif_tin_bizum_pp = st.number_input("Bonif. TIN por Bizum (p.p.)", min_value=0.0, value=float(h.get("bonif_tin_bizum_pp", 0) or 0), step=0.05, format="%.2f", key=f"e_bizb_{hid}")
-        anos_bonif_bizum = st.number_input("Años bonif. Bizum (0 = todo)", min_value=0, max_value=40, value=int(h.get("años_bonif_bizum", 0) or 0), step=1, key=f"e_ab_biz_{hid}")
+        bonif_tin_bizum_pp = _campo_bonificacion("Bonif. TIN por Bizum (p.p.)", value=float(h.get("bonif_tin_bizum_pp", 0) or 0), step=0.05, format_str="%.2f", key=f"e_bizb_{hid}")
+        anos_bonif_bizum = _campo_bonificacion("Años bonif. Bizum (0 = todo)", value=int(h.get("años_bonif_bizum", 0) or 0), min_value=0, max_value=40, step=1, key=f"e_ab_biz_{hid}")
         tarjeta_credito = st.checkbox("Tarjeta de crédito vinculada", value=bool(h.get("tarjeta_credito", False)), key=f"e_tar_{hid}")
-        bonif_tin_tarjeta_pp = st.number_input("Bonif. TIN por tarjeta (p.p.)", min_value=0.0, value=float(h.get("bonif_tin_tarjeta_pp", 0) or 0), step=0.05, format="%.2f", key=f"e_tarb_{hid}")
-        anos_bonif_tarjeta = st.number_input("Años bonif. tarjeta (0 = todo)", min_value=0, max_value=40, value=int(h.get("años_bonif_tarjeta", 0) or 0), step=1, key=f"e_ab_tar_{hid}")
+        bonif_tin_tarjeta_pp = _campo_bonificacion("Bonif. TIN por tarjeta (p.p.)", value=float(h.get("bonif_tin_tarjeta_pp", 0) or 0), step=0.05, format_str="%.2f", key=f"e_tarb_{hid}")
+        anos_bonif_tarjeta = _campo_bonificacion("Años bonif. tarjeta (0 = todo)", value=int(h.get("años_bonif_tarjeta", 0) or 0), min_value=0, max_value=40, step=1, key=f"e_ab_tar_{hid}")
 
         guardar = st.form_submit_button("Guardar cambios")
 
@@ -620,6 +617,7 @@ def _editor_hipoteca(usuario_id: int, h: dict):
             "mantenimiento": float(mantenimiento),
             "mantenimiento_tarjeta": float(mantenimiento_tarjeta),
             "tasacion": float(tasacion),
+            "comision_apertura": float(comision_apertura),
             "bonificacion_firma": float(bonificacion_firma),
             "bonif_nomina_eur": float(bonif_nomina_eur),
             "seguro_hogar": float(seguro_hogar),
@@ -908,7 +906,8 @@ def coste_total_primero_ano(h: dict) -> float:
         intereses += im
         cap -= am
     bonif_firma = float(h.get("bonificacion_firma", 0) or 0)
-    return intereses + coste_anual_vinculados(h) + float(h.get("tasacion", 0) or 0) - bonif_firma
+    com_ap = float(h.get("comision_apertura", 0) or 0)
+    return intereses + coste_anual_vinculados(h) + float(h.get("tasacion", 0) or 0) + com_ap - bonif_firma
 
 
 def _duracion_str(meses: int) -> str:
@@ -988,7 +987,9 @@ def _resumen_costes_hipoteca(
     coste_anual = _coste_anual_vinculados_año(h, 1, precios_externos, usar_externos)
 
     bonificacion_firma = float(h.get("bonificacion_firma", 0) or 0)
-    coste_total = intereses_totales + vinculados_totales + float(h.get("tasacion", 0) or 0) + comisiones_por_extra - bonificacion_firma
+    comision_apertura = float(h.get("comision_apertura", 0) or 0)
+    tasacion = float(h.get("tasacion", 0) or 0)
+    coste_total = intereses_totales + vinculados_totales + tasacion + comision_apertura + comisiones_por_extra - bonificacion_firma
 
     return {
         "tae": tae,
@@ -1004,6 +1005,7 @@ def _resumen_costes_hipoteca(
         "pagado_extra": float(pagado_extra),
         "comisiones_por_extra": float(comisiones_por_extra),
         "vinculados_totales": float(vinculados_totales),
+        "comision_apertura": float(comision_apertura),
         "bonificacion_firma": float(bonificacion_firma),
         "coste_total": float(coste_total),
         "cuadro": cuadro,
@@ -1298,7 +1300,7 @@ def comparador(usuario_id: int):
     criterio = st.selectbox(
         "¿Qué significa “más ventajosa”?",
         [
-            "Coste total (intereses + vinculados + tasación + comisiones por amortización extra)",
+            "Coste total (intereses + vinculados + tasación + comisión apertura + comisiones por amortización extra)",
             "TAE (menor es mejor)",
             "Cuota mensual inicial (menor es mejor)",
             "Coste primer año (intereses reales año 1 + vinculados + tasación)",
@@ -1356,6 +1358,7 @@ def comparador(usuario_id: int):
             "Intereses totales (€)": round(r.get("intereses_totales", 0), 2),
             "Vinculados/año usados (€)": round(r.get("coste_anual_vinculados", 0), 2),
             "Vinculados totales (€)": round(r.get("vinculados_totales", 0), 2),
+            "Com. apertura (€)": round(r.get("comision_apertura", 0), 2),
             "Bonif. firma (€)": round(r.get("bonificacion_firma", 0), 2),
             "Comisiones extra (€)": round(r.get("comisiones_por_extra", 0), 2),
             "Duración": _duracion_str(int(r.get("meses_hasta_fin", 0))),
@@ -1615,6 +1618,9 @@ def main():
             st.caption("---")
             st.caption(f"**Total gastos compra: {d['total']:,.0f} €**")
 
+    st.sidebar.markdown("---")
+    st.sidebar.caption(f"**Hipochorro** v{VERSION_APP}")
+
     tab1, tab2, tab3, tab4 = st.tabs(["Alta de hipotecas", "Comparador", "Agenda inmuebles", "Info"])
     with tab1:
         formulario_hipoteca(u["id"])
@@ -1646,6 +1652,18 @@ def main():
         - Los logos se intentan descargar por dominio (ej. `bbva.com`) y se almacenan en `data/logos/`.
         - El comparador ordena por TAE, coste primer año y productos vinculados para señalar la opción más ventajosa.
         - El cuadro de amortización usa el **sistema francés** (cuota constante) y permite amortización extraordinaria anual.
+        """)
+        st.markdown("---")
+        st.subheader("Changelog")
+        st.markdown(f"**Versión actual: {VERSION_APP}**")
+        st.markdown("""
+        - **1.6.0** — Resaltado en verde de todos los campos de bonificación (bonif., bonificado, bonificación) en alta y edición de hipotecas.
+        - **1.5.0** — Resaltado en rojo de campos de comisiones y costes (comisión amortización, mantenimiento, tasación, seguros, alarma, protección pagos, pensión, comisión de apertura). Comisión de apertura e importe bonificado en la firma en formularios.
+        - **1.4.0** — Gastos de compra completos: ITP 7%, notaría y registro (10% del ITP cada uno), gestoría 300 €. Desglose en sidebar con total de gastos. Inmuebles: certificado energético, habitaciones, baños, notas; título con precio/m².
+        - **1.3.0** — Agenda de inmuebles: pestaña dedicada, formulario (importe, localización, año, m², piscina, sótano, particular/inmobiliaria, comisión venta). Obtención de fotos desde URL de anuncio (Idealista vía ZenRows/Apify o scraping). Selector de inmueble en sidebar para simular hipoteca.
+        - **1.2.0** — Selector “Aplicar amortización extraordinaria para…” movido debajo del campo de amortización extraordinaria anual. Modo mixto de amortización en comparador.
+        - **1.1.0** — En comparador: seguro de hogar con años de bonificación usa coste banco durante bonificación y coste externo después; hipotecas sin vinculación de seguro hogar consideran siempre el coste externo obligatorio.
+        - **1.0.0** — Versión base: usuarios e hipotecas en GitHub, logos por dominio, comparador por TAE y coste primer año, cuadro de amortización sistema francés con amortización extraordinaria.
         """)
 
 
