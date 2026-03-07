@@ -344,6 +344,15 @@ _CSS_BONIFICACION = '<span style="color:#083; font-weight:bold;">'
 
 def _campo_bonificacion(label: str, value: float | int = 0, min_value: float | int = 0, max_value: int | None = None, step: float | int = 1, format_str: str | None = None, key: str | None = None, help_text: str | None = None):
     """Renderiza etiqueta en verde y número input con barra lateral verde (bonificaciones)."""
+    # Streamlit exige que value, min_value, max_value y step sean del mismo tipo (int o float).
+    if isinstance(value, float):
+        min_value = float(min_value)
+        step = float(step)
+        max_value = float(max_value) if max_value is not None else None
+    else:
+        min_value = int(min_value)
+        step = int(step)
+        max_value = int(max_value) if max_value is not None else None
     col_bar, col_c = st.columns([0.012, 0.988])
     with col_bar:
         st.markdown('<div style="background:#083; min-height:52px; margin-top:6px; border-radius:2px;"></div>', unsafe_allow_html=True)
