@@ -27,6 +27,33 @@
       "url_inmobiliaria": "https://www.alvarezsalmeron.com/ficha-inmueble.asp?c=25966&cod_ofer=28104676&numagencia=6542",
       "valoracion": 286000.0,
       "horas_luz_anual": true
+    },
+    {
+      "importe": 295000.0,
+      "valoracion": 0.0,
+      "localizacion": "calle violeta 8, Ogíjares, Granada",
+      "ano_construccion": 2003,
+      "m2_construidos": 164.0,
+      "m2_utiles": 146.8,
+      "superficie_placas_m2": 0.0,
+      "habitaciones": 3,
+      "banos": 3,
+      "certificado_consumo": "E",
+      "certificado_emisiones": "E",
+      "consumo_exacto_kwh_m2": 193.6,
+      "emisiones_exactas_kg_m2": 50.0,
+      "zona_climatica_cte": "C3",
+      "notas": "",
+      "piscina": false,
+      "sotano": true,
+      "placas_solares": false,
+      "inmobiliaria": true,
+      "comision_venta_pct": 3.0,
+      "url_anuncio": "",
+      "url_inmobiliaria": "www.webparainmobiliarias.com.es/frame-clientes/11366/imprimirfichapropiedad.php?voyimprimir=1&datoofe=27776651.11366",
+      "categoria": "Interesados",
+      "fecha_creacion": "2026-03-07T23:08:52.643663",
+      "id": 2
     }
   ]
 }
