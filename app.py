@@ -25,6 +25,12 @@ try:
     from PIL import Image
 except Exception:  # pragma: no cover
     Image = None
+try:
+    import folium
+    from streamlit_folium import st_folium
+except Exception:  # pragma: no cover
+    folium = None  # type: ignore
+    st_folium = None  # type: ignore
 
 ASSETS_DIR = Path(__file__).parent / "assets"
 LOGO_APP_PATH = ASSETS_DIR / "logo.png"
@@ -47,7 +53,7 @@ HELP_TAE = (
 APIFY_TOKEN_SECRET = "APIFY_TOKEN_SECRET"
 
 # Versión de la aplicación (visible en sidebar y changelog)
-VERSION_APP = "1.7.0"
+VERSION_APP = "1.8.0"
 
 # Gastos de compra (sobre precio de la vivienda / ITP)
 ITP_PCT = 7.0           # Impuesto de Transmisiones Patrimoniales: % sobre precio vivienda
@@ -94,6 +100,10 @@ if "inmueble_seleccionado" not in st.session_state:
     st.session_state.inmueble_seleccionado = None  # dict del inmueble o None
 if "fotos_extraidas" not in st.session_state:
     st.session_state.fotos_extraidas = None  # {"inmueble_id": int, "urls": [str]} o None
+if "gps_duracion_cache" not in st.session_state:
+    st.session_state.gps_duracion_cache = {}  # (inv_id, destino_str) -> minutos
+if "gps_coords_cache" not in st.session_state:
+    st.session_state.gps_coords_cache = {}  # str (dirección) -> (lat, lon)
 
 
 def intentar_logo_desde_dominio(dominio: str):
@@ -345,6 +355,91 @@ def _titulo_inmueble(inv: dict) -> str:
     if p is not None:
         return f"{loc} — {imp:,.0f} € — {p:,.0f} €/m²"
     return f"{loc} — {imp:,.0f} €"
+
+
+def _geocode_nominatim(direccion: str) -> tuple[float, float] | None:
+    """Geocodifica una dirección con Nominatim (OSM). Devuelve (lat, lon) o None. Respeta 1 req/s."""
+    direccion = (direccion or "").strip()
+    if not direccion:
+        return None
+    cache = st.session_state.get("gps_coords_cache", {})
+    if direccion in cache:
+        return cache[direccion]
+    try:
+        import time
+        url = "https://nominatim.openstreetmap.org/search"
+        params = {"q": direccion + ", España", "format": "json", "limit": 1}
+        headers = {"User-Agent": "Hipochorro/1.0 (comparador inmuebles)"}
+        r = requests.get(url, params=params, headers=headers, timeout=10)
+        r.raise_for_status()
+        data = r.json()
+        if data and isinstance(data, list) and len(data) > 0:
+            lat = float(data[0].get("lat", 0))
+            lon = float(data[0].get("lon", 0))
+            st.session_state.setdefault("gps_coords_cache", {})[direccion] = (lat, lon)
+            import time
+            time.sleep(1)  # Nominatim: máx 1 petición por segundo
+            return (lat, lon)
+    except Exception:
+        pass
+    return None
+
+
+def _ruta_coche_minutos(lon1: float, lat1: float, lon2: float, lat2: float) -> float | None:
+    """Duración del trayecto en coche entre dos puntos (OSRM). Devuelve minutos o None."""
+    try:
+        url = f"https://router.project-osrm.org/route/v1/driving/{lon1},{lat1};{lon2},{lat2}?overview=false"
+        r = requests.get(url, timeout=15)
+        r.raise_for_status()
+        data = r.json()
+        if data.get("code") == "Ok" and data.get("routes"):
+            segundos = float(data["routes"][0].get("duration", 0))
+            return round(segundos / 60.0, 1)
+    except Exception:
+        pass
+    return None
+
+
+def _coords_inmueble(inv: dict) -> tuple[float, float] | None:
+    """Obtiene (lat, lon) del inmueble: guardadas en ficha, posición temporal del pin, o geocodificación. None si no hay datos."""
+    inv_id = inv.get("id")
+    if inv.get("lat") is not None and inv.get("lon") is not None:
+        try:
+            return (float(inv["lat"]), float(inv["lon"]))
+        except (TypeError, ValueError):
+            pass
+    if inv_id:
+        tmp = st.session_state.get(f"pin_{inv_id}")
+        if tmp and len(tmp) == 2:
+            try:
+                return (float(tmp[0]), float(tmp[1]))
+            except (TypeError, ValueError):
+                pass
+    loc = (inv.get("localizacion") or "").strip()
+    if loc:
+        return _geocode_nominatim(loc)
+    return None
+
+
+def _duracion_minutos_a_destino(inv: dict, destino_str: str) -> float | None:
+    """Duración en minutos por carretera desde la localización del inmueble hasta destino. Usa caché."""
+    inv_id = inv.get("id")
+    if not inv_id or not (destino_str or "").strip():
+        return None
+    cache = st.session_state.get("gps_duracion_cache", {})
+    key = (inv_id, destino_str.strip())
+    if key in cache:
+        return cache[key]
+    coords_origen = _coords_inmueble(inv)
+    coords_destino = _geocode_nominatim(destino_str.strip())
+    if not coords_origen or not coords_destino:
+        st.session_state.setdefault("gps_duracion_cache", {})[key] = None
+        return None
+    lat1, lon1 = coords_origen
+    lat2, lon2 = coords_destino
+    minutos = _ruta_coche_minutos(lon1, lat1, lon2, lat2)
+    st.session_state.setdefault("gps_duracion_cache", {})[key] = minutos
+    return minutos
 
 
 # Estilo para resaltar en rojo campos de comisiones/costes
@@ -1141,6 +1236,7 @@ def agenda_inmuebles(usuario_id: int):
         st.markdown("---")
         st.subheader("Inmuebles dados de alta")
         # Filtros y ordenación
+        destino_gps = st.session_state.get("gps_destino", "Motril, Granada") or "Motril, Granada"
         ord_opciones = [
             "Recientes (fecha creación)",
             "Precio (menor a mayor)",
@@ -1151,6 +1247,7 @@ def agenda_inmuebles(usuario_id: int):
             "Habitaciones (más primero)",
             "m² útiles (mayor primero)",
             "€/m² (menor primero)",
+            "Duración a destino (menor primero)",
         ]
         f1, f2, f3 = st.columns(3)
         with f1:
@@ -1160,6 +1257,13 @@ def agenda_inmuebles(usuario_id: int):
             filtro_sotano = st.checkbox("Solo con sótano", key="filtro_sotano_inm")
         with f3:
             orden_por = st.selectbox("Ordenar por", ord_opciones, key="orden_inm")
+        if st.button("🔄 Calcular rutas a destino (GPS)", key="btn_calc_rutas"):
+            import time
+            with st.spinner("Calculando rutas por carretera a " + destino_gps + "…"):
+                for inv in inmuebles:
+                    _duracion_minutos_a_destino(inv, destino_gps)
+                    time.sleep(1)  # Nominatim: 1 petición por segundo
+            st.rerun()
         # Aplicar filtros
         lista = list(inmuebles)
         if filtro_categoria != "Todas":
@@ -1190,6 +1294,12 @@ def agenda_inmuebles(usuario_id: int):
             lista = sorted(lista, key=lambda i: -(float(i.get("m2_utiles") or 0)))
         elif orden_por == "€/m² (menor primero)":
             lista = sorted(lista, key=lambda i: (float(_precio_m2_inmueble(i) or 0) or 1e9))
+        elif orden_por == "Duración a destino (menor primero)":
+            with st.spinner("Calculando rutas por carretera…"):
+                def _clave_duracion(inv):
+                    d = _duracion_minutos_a_destino(inv, destino_gps)
+                    return (d is None, d if d is not None else 1e9)
+                lista = sorted(lista, key=_clave_duracion)
         for inv in lista:
             cat = _categoria_inmueble(inv)
             emoji = "🟢" if cat == CATEGORIA_INTERESADOS else "🔵"
@@ -1209,6 +1319,10 @@ def agenda_inmuebles(usuario_id: int):
                     # Badge de categoría con color (verde #083 / azul #038)
                     color = "#083" if cat == CATEGORIA_INTERESADOS else "#038"
                     st.markdown(f'<span style="color:{color}; font-weight:bold;">{cat}</span>', unsafe_allow_html=True)
+                    cache_duracion = st.session_state.get("gps_duracion_cache", {})
+                    minutos_destino = cache_duracion.get((inv.get("id"), destino_gps))
+                    if minutos_destino is not None:
+                        st.caption(f"🚗 **{minutos_destino} min** en coche a {destino_gps}")
                     if fotos_urls:
                         try:
                             st.image(fotos_urls[0], caption="Foto del anuncio", use_container_width=True)
@@ -1227,8 +1341,49 @@ def agenda_inmuebles(usuario_id: int):
                     st.caption(f"Coste total compra: **{d['total']:,.0f} €** (precio + comisión + ITP {ITP_PCT}% + notaría + registro + gestoría {GESTORIA_EUR:.0f} €)")
                     if inv.get("url_anuncio"):
                         st.markdown(f"[Ver anuncio]({inv['url_anuncio']})")
-                    # Obtener fotos desde URL y que el usuario elija cuáles añadir
                     inv_id = inv.get("id")
+                    # Mapa: comprobar geocodificación y permitir recolocar el pin y guardar coordenadas
+                    if folium is not None and st_folium is not None and inv_id is not None:
+                        st.markdown("**Mapa** (haz clic en el mapa para recolocar el pin)")
+                        coords_orig = _coords_inmueble(inv)
+                        coords = coords_orig if coords_orig is not None else (37.18, -3.6)
+                        if coords_orig is None:
+                            st.caption("Sin coordenadas aún. Indica localización en la ficha o haz clic en el mapa y pulsa Guardar.")
+                        lat, lon = coords
+                        m = folium.Map(location=[lat, lon], zoom_start=14, tiles="OpenStreetMap")
+                        folium.Marker(
+                            location=[lat, lon],
+                            popup=inv.get("localizacion") or "Inmueble",
+                            tooltip="Haz clic en el mapa para mover el pin",
+                        ).add_to(m)
+                        out = st_folium(m, key=f"map_inv_{inv_id}", height=300, width=None)
+                        if out and out.get("last_object_clicked") is None and out.get("last_clicked") is not None:
+                            click = out["last_clicked"]
+                            if isinstance(click, dict) and "lat" in click and "lng" in click:
+                                st.session_state[f"pin_{inv_id}"] = (float(click["lat"]), float(click["lng"]))
+                                st.rerun()
+                        col_save, _ = st.columns([0.2, 0.8])
+                        with col_save:
+                            if st.button("💾 Guardar coordenadas", key=f"btn_guardar_coords_{inv_id}"):
+                                pos = st.session_state.get(f"pin_{inv_id}")
+                                if pos is None:
+                                    pos = coords_orig
+                                if pos is None:
+                                    st.warning("Haz clic en el mapa para fijar la posición antes de guardar.")
+                                elif isinstance(pos, (tuple, list)) and len(pos) >= 2:
+                                    inv_act = {**inv, "lat": float(pos[0]), "lon": float(pos[1])}
+                                    if ghd.actualizar_inmueble(usuario_id, inv_act):
+                                        if f"pin_{inv_id}" in st.session_state:
+                                            del st.session_state[f"pin_{inv_id}"]
+                                        loc_key = (inv.get("localizacion") or "").strip()
+                                        if loc_key and "gps_coords_cache" in st.session_state and loc_key in st.session_state.gps_coords_cache:
+                                            del st.session_state.gps_coords_cache[loc_key]
+                                        st.session_state.gps_duracion_cache = {k: v for k, v in st.session_state.get("gps_duracion_cache", {}).items() if k[0] != inv_id}
+                                        st.success("Coordenadas guardadas.")
+                                        st.rerun()
+                                    else:
+                                        st.error("Error al guardar.")
+                    # Obtener fotos desde URL y que el usuario elija cuáles añadir
                     if inv.get("url_anuncio"):
                         if "idealista" in (inv.get("url_anuncio") or "").lower():
                             st.caption("Idealista suele bloquear peticiones directas (403). Configura **APIFY_TOKEN** o **ZENROWS_API_KEY** en secrets (ver `docs/IDEALISTA_SCRAPING.md`).")
@@ -1677,6 +1832,16 @@ def main():
         st.session_state.inmueble_seleccionado = None
         st.rerun()
 
+    if "gps_destino" not in st.session_state:
+        st.session_state.gps_destino = "Motril, Granada"
+    st.sidebar.markdown("**GPS**")
+    gps_destino = st.sidebar.text_input(
+        "Ciudad de destino (ruta por carretera)",
+        value=st.session_state.get("gps_destino", "Motril, Granada"),
+        key="gps_destino",
+        help="Se usa para calcular la duración en coche desde cada inmueble y como criterio de ordenación en la agenda.",
+    )
+
     # Selector de inmueble: Interesados (verde) primero, separador, En Estudio (azul)
     inmuebles = ghd.get_inmuebles(u["id"])
     interesados = [inv for inv in inmuebles if _categoria_inmueble(inv) == CATEGORIA_INTERESADOS]
@@ -1754,6 +1919,7 @@ def main():
         st.subheader("Changelog")
         st.markdown(f"**Versión actual: {VERSION_APP}**")
         st.markdown("""
+        - **1.8.0** — Sección GPS en sidebar: ciudad de destino (por defecto Motril, Granada) para rutas por carretera; duración en minutos como criterio de ordenación en la agenda; botón «Calcular rutas a destino». Visor de mapa en cada ficha de inmueble (Folium): pin para comprobar geocodificación, clic en el mapa para recolocar el pin, botón «Guardar coordenadas» para persistir lat/lon en la ficha.
         - **1.7.0** — Agenda de inmuebles: categorías Interesados / En Estudio (estilo verde/azul); filtros por categoría, piscina y sótano; ordenar por recientes (fecha creación), precio, categoría, piscina, sótano, habitaciones, m² o €/m²; miniatura de la foto en la línea del desplegable; fecha de creación al dar de alta.
         - **1.6.0** — Resaltado en verde de todos los campos de bonificación (bonif., bonificado, bonificación) en alta y edición de hipotecas.
         - **1.5.0** — Resaltado en rojo de campos de comisiones y costes (comisión amortización, mantenimiento, tasación, seguros, alarma, protección pagos, pensión, comisión de apertura). Comisión de apertura e importe bonificado en la firma en formularios.
