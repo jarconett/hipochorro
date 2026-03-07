@@ -10,6 +10,7 @@ _root = Path(__file__).resolve().parent
 if str(_root) not in sys.path:
     sys.path.insert(0, str(_root))
 
+import json
 import math
 import re
 from datetime import datetime
@@ -147,6 +148,39 @@ def _reduccion_decimal_por_zona_cte(zona_cte: str) -> float | None:
 
 # Panel típico: ~1.7 m² (1.6 m x 1 m)
 AREA_PLACA_TIPICA_M2 = 1.7
+# Eficiencia típica placa actual (mono/policristalina): ~20-22 %
+EFICIENCIA_PLACA_DEFAULT = 0.20
+# Performance ratio: pérdidas por calor, cableado, suciedad, etc. (0.75-0.85 habitual)
+PERFORMANCE_RATIO_DEFAULT = 0.80
+
+
+def _datos_sol_desde_json(inv: dict) -> tuple[float | None, float | None]:
+    """
+    Extrae del JSON de horas de luz del inmueble: horas de sol anuales y kWh/m²·año recibidos.
+    Convención: 1 hora de sol directo ≈ 1 kWh/m² (equivalente pico).
+    Returns (horas_sol_anuales, kWh_m2_anual) o (None, None) si no hay datos.
+    """
+    hl = inv.get("horas_luz_anual")
+    if not hl or not isinstance(hl, dict) or not hl.get("minutesOfDirectSunPerDay"):
+        return None, None
+    total_min = hl.get("minutesOfDirectSunPerYear") or sum(hl["minutesOfDirectSunPerDay"])
+    horas = total_min / 60.0
+    # Irradiación: 1 peak sun hour = 1 kWh/m²
+    kwh_m2_anual = horas
+    return horas, kwh_m2_anual
+
+
+def _produccion_placa_desde_irradiancia(
+    kwh_m2_anual: float,
+    area_placa_m2: float,
+    eficiencia: float = EFICIENCIA_PLACA_DEFAULT,
+    performance_ratio: float = PERFORMANCE_RATIO_DEFAULT,
+) -> float:
+    """
+    Producción eléctrica anual por placa (kWh/año) a partir de irradiación en el emplazamiento.
+    Fórmula: área_placa × kWh/m²·año × eficiencia × PR (pérdidas por calor, cableado, etc.).
+    """
+    return kwh_m2_anual * area_placa_m2 * eficiencia * performance_ratio
 
 
 def _consumo_anual_desde_certificado(inv: dict) -> float | None:
@@ -623,6 +657,28 @@ def _titulo_inmueble(inv: dict, duracion_min: float | None = None) -> str:
     if sup_placas > 0:
         base += f" — ⚡ {sup_placas:.0f} m²"
     return base
+
+
+def _parse_sunlight_json(uploaded_file) -> dict | None:
+    """
+    Parsea un archivo JSON de horas de luz anuales.
+    Espera estructura con 'minutesOfDirectSunPerDay' (array 365/366 valores).
+    Devuelve el dict completo o None si no es válido.
+    """
+    if uploaded_file is None:
+        return None
+    try:
+        data = json.load(uploaded_file)
+        if not isinstance(data, dict):
+            return None
+        arr = data.get("minutesOfDirectSunPerDay")
+        if not isinstance(arr, list) or len(arr) not in (365, 366):
+            return None
+        if not all(isinstance(x, (int, float)) for x in arr):
+            return None
+        return data
+    except (json.JSONDecodeError, TypeError):
+        return None
 
 
 def _leyenda_placas_subvencion(inv: dict) -> str | None:
@@ -1568,10 +1624,23 @@ def _editor_inmueble(usuario_id: int, inv: dict):
         url_inmobiliaria = st.text_input("URL inmobiliaria", value=inv.get("url_inmobiliaria", "") or "", key=f"ei_url_inm_{inv_id}", placeholder="https://...", help="Web propia de la inmobiliaria con el anuncio; suele permitir extraer las imágenes con más facilidad.")
         cat_actual = _categoria_inmueble(inv)
         categoria = st.radio("Categoría", CATEGORIAS_INMUEBLE, horizontal=True, index=CATEGORIAS_INMUEBLE.index(cat_actual) if cat_actual in CATEGORIAS_INMUEBLE else 0, key=f"ei_cat_{inv_id}")
+        st.caption("**Horas de luz anuales:** sube un JSON (minutesOfDirectSunPerDay, minutesOfDirectSunPerYear) para actualizar o reemplazar.")
+        upload_sunlight = st.file_uploader("Archivo JSON horas de sol", type=["json"], key=f"ei_sun_{inv_id}", help="Mismo formato que annual-sunlight.json.")
+        eliminar_sunlight = False
+        if inv.get("horas_luz_anual"):
+            total_actual = inv["horas_luz_anual"].get("minutesOfDirectSunPerYear") or sum(inv["horas_luz_anual"].get("minutesOfDirectSunPerDay", []))
+            st.caption(f"Datos actuales: **{total_actual:.0f}** min/año ({total_actual / 60:.1f} h).")
+            eliminar_sunlight = st.checkbox("Eliminar datos de horas de sol", key=f"ei_del_sun_{inv_id}")
         if st.form_submit_button("Guardar cambios"):
             cert_consumo_final = _letra_desde_consumo_kwh_m2(consumo_exacto_input) if consumo_exacto_input > 0 else (certificado_consumo if certificado_consumo != "—" else "")
             cert_emisiones_final = _letra_desde_emisiones_kg_m2(emisiones_exactas_input) if emisiones_exactas_input > 0 else (certificado_emisiones if certificado_emisiones != "—" else "")
             inv_act = {**inv, "importe": importe, "valoracion": float(valoracion), "localizacion": localizacion, "ano_construccion": int(ano_construccion), "m2_construidos": m2_construidos, "m2_utiles": m2_utiles, "superficie_placas_m2": float(superficie_placas_m2), "habitaciones": int(habitaciones), "banos": int(banos), "certificado_consumo": cert_consumo_final, "certificado_emisiones": cert_emisiones_final, "consumo_exacto_kwh_m2": float(consumo_exacto_input), "emisiones_exactas_kg_m2": float(emisiones_exactas_input), "zona_climatica_cte": zona_climatica_cte if zona_climatica_cte != "—" else "", "notas": (notas or "").strip(), "piscina": piscina, "sotano": sotano, "placas_solares": placas_solares, "inmobiliaria": inmobiliaria, "comision_venta_pct": comision_venta_pct, "url_anuncio": url_anuncio.strip(), "url_inmobiliaria": url_inmobiliaria.strip(), "categoria": categoria}
+            if upload_sunlight:
+                parsed_sun = _parse_sunlight_json(upload_sunlight)
+                if parsed_sun:
+                    inv_act["horas_luz_anual"] = parsed_sun
+            elif eliminar_sunlight:
+                inv_act["horas_luz_anual"] = None
             if ghd.actualizar_inmueble(usuario_id, inv_act):
                 st.success("Inmueble actualizado.")
                 st.rerun()
@@ -1629,6 +1698,8 @@ def agenda_inmuebles(usuario_id: int):
         url_anuncio = st.text_input("URL del anuncio Idealista", placeholder="https://www.idealista.com/...")
         url_inmobiliaria = st.text_input("URL inmobiliaria", placeholder="https://...", help="Web de la inmobiliaria con el anuncio; suele permitir listar las imágenes con más facilidad.")
         categoria = st.radio("Categoría", CATEGORIAS_INMUEBLE, horizontal=True, index=0)
+        st.caption("Horas de luz anuales (opcional): sube un JSON con minutos de sol por día (ej. annual-sunlight.json).")
+        sunlight_file_alta = st.file_uploader("Archivo JSON horas de sol", type=["json"], key="alta_sunlight_json", help="Estructura: minutesOfDirectSunPerDay (array 365/366), minutesOfDirectSunPerYear.")
         if st.form_submit_button("Dar de alta inmueble"):
             cert_consumo_alta = _letra_desde_consumo_kwh_m2(consumo_exacto_alta) if consumo_exacto_alta > 0 else (certificado_consumo if certificado_consumo != "—" else "")
             cert_emisiones_alta = _letra_desde_emisiones_kg_m2(emisiones_exactas_alta) if emisiones_exactas_alta > 0 else (certificado_emisiones if certificado_emisiones != "—" else "")
@@ -1658,6 +1729,10 @@ def agenda_inmuebles(usuario_id: int):
                 "categoria": categoria,
                 "fecha_creacion": datetime.now().isoformat(),
             }
+            if sunlight_file_alta:
+                parsed_sun = _parse_sunlight_json(sunlight_file_alta)
+                if parsed_sun:
+                    inv["horas_luz_anual"] = parsed_sun
             nuevo = ghd.añadir_inmueble(usuario_id, inv)
             if nuevo:
                 st.success("Inmueble dado de alta. Abre su ficha y usa «Obtener / Recargar imágenes» para elegir las fotos desde Idealista y/o la web de la inmobiliaria.")
@@ -1807,7 +1882,12 @@ def agenda_inmuebles(usuario_id: int):
                         reduccion_decimal = _reduccion_decimal_por_zona_cte(zona_cte)
                         if reduccion_decimal is not None:
                             with st.expander("☀️ Cálculo placas solares para subvención", expanded=False):
-                                st.caption("Estima el número de placas y la superficie necesaria para alcanzar la reducción energética mínima, y un presupuesto orientativo de instalación.")
+                                st.caption("Estima el número de placas y la superficie necesaria para alcanzar la reducción energética mínima. Si has subido un JSON de horas de sol, se usa la irradiación real del inmueble con eficiencia y pérdidas (PR) para el rendimiento por placa.")
+                                # Datos de irradiación desde JSON (horas de sol / kWh/m²·año)
+                                horas_sol, kwh_m2_anual = _datos_sol_desde_json(inv)
+                                if horas_sol is not None and kwh_m2_anual is not None:
+                                    st.markdown("**Datos de irradiación (JSON horas de sol)**")
+                                    st.caption(f"Horas de sol anuales: **{horas_sol:.0f} h** · Energía recibida: **{kwh_m2_anual:.0f} kWh/m²·año** (equivalente pico)")
                                 consumo_ref = _consumo_anual_desde_certificado(inv)
                                 valor_consumo = float(consumo_ref) if consumo_ref is not None else 5000.0
                                 c1, c2 = st.columns(2)
@@ -1817,9 +1897,16 @@ def agenda_inmuebles(usuario_id: int):
                                         cert_consumo = inv.get("certificado_consumo") or inv.get("certificado_energetico") or ""
                                         m2 = float(inv.get("m2_utiles", 0) or 0) or float(inv.get("m2_construidos", 0) or 0)
                                         st.caption(f"↳ Estimado: cert. consumo **{cert_consumo}** × {m2:.0f} m² ≈ **{consumo_ref:.0f}** kWh/año")
-                                    produccion_placa = st.number_input("Producción por placa (kWh/año)", min_value=1.0, value=510.0, step=10.0, key=f"placas_prod_{inv_id}")
-                                with c2:
                                     area_placa = st.number_input("Superficie por placa (m²)", min_value=0.5, value=AREA_PLACA_TIPICA_M2, step=0.1, format="%.1f", key=f"placas_area_{inv_id}")
+                                with c2:
+                                    eficiencia_pct = st.number_input("Eficiencia placa (%)", min_value=1.0, max_value=30.0, value=EFICIENCIA_PLACA_DEFAULT * 100, step=0.5, key=f"placas_eff_{inv_id}", help="Rendimiento típico placas actuales: 20-22 %.")
+                                    pr = st.number_input("Performance ratio (PR)", min_value=0.5, max_value=1.0, value=PERFORMANCE_RATIO_DEFAULT, step=0.05, format="%.2f", key=f"placas_pr_{inv_id}", help="Pérdidas por calor, cableado, suciedad. 0.75-0.85 habitual.")
+                                    if horas_sol is not None and kwh_m2_anual is not None:
+                                        prod_calculada = _produccion_placa_desde_irradiancia(kwh_m2_anual, area_placa, eficiencia_pct / 100.0, pr)
+                                        st.caption(f"↳ **Producción por placa (calculada):** {prod_calculada:.0f} kWh/año (irradiación × área × {eficiencia_pct:.0f}% × PR {pr:.2f})")
+                                        produccion_placa = st.number_input("Producción por placa (kWh/año)", min_value=1.0, value=round(prod_calculada, 0), step=10.0, key=f"placas_prod_{inv_id}", help="Por defecto calculada con los datos de sol del inmueble; puedes ajustar manualmente.")
+                                    else:
+                                        produccion_placa = st.number_input("Producción por placa (kWh/año)", min_value=1.0, value=510.0, step=10.0, key=f"placas_prod_{inv_id}", help="Sin JSON de horas de sol: introduce un valor medio (ej. 510 kWh/año por placa).")
                                 num_placas, superficie_m2 = calcular_placas_solares(consumo_anual, reduccion_decimal, produccion_placa, area_placa)
                                 st.metric("Placas necesarias", num_placas)
                                 st.metric("Superficie necesaria", f"{superficie_m2:.1f} m²")
@@ -1891,6 +1978,16 @@ def agenda_inmuebles(usuario_id: int):
                                         st.rerun()
                                     else:
                                         st.error("Error al guardar.")
+                    # Gráfica horas de sol anuales (desde JSON subido)
+                    horas_luz = inv.get("horas_luz_anual")
+                    if horas_luz and isinstance(horas_luz, dict) and horas_luz.get("minutesOfDirectSunPerDay"):
+                        st.markdown("**☀️ Horas de sol anuales**")
+                        arr = horas_luz["minutesOfDirectSunPerDay"]
+                        total_min = horas_luz.get("minutesOfDirectSunPerYear") or sum(arr)
+                        total_h = total_min / 60.0
+                        st.caption(f"Total: **{total_min:.0f}** min/año (**{total_h:.1f}** h). Cada punto = minutos de sol directo ese día.")
+                        df_sol = pd.DataFrame({"Día": range(len(arr)), "Minutos de sol": arr})
+                        st.line_chart(df_sol.set_index("Día")["Minutos de sol"], height=280)
                     # Obtener fotos desde URL(s): Idealista y/o web inmobiliaria
                     if inv.get("url_anuncio") or inv.get("url_inmobiliaria"):
                         if inv.get("url_anuncio") and "idealista" in (inv.get("url_anuncio") or "").lower():
