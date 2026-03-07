@@ -11,6 +11,7 @@ if str(_root) not in sys.path:
     sys.path.insert(0, str(_root))
 
 import re
+from datetime import datetime
 import streamlit as st
 import pandas as pd
 import requests
@@ -46,7 +47,7 @@ HELP_TAE = (
 APIFY_TOKEN_SECRET = "APIFY_TOKEN_SECRET"
 
 # Versión de la aplicación (visible en sidebar y changelog)
-VERSION_APP = "1.6.0"
+VERSION_APP = "1.7.0"
 
 # Gastos de compra (sobre precio de la vivienda / ITP)
 ITP_PCT = 7.0           # Impuesto de Transmisiones Patrimoniales: % sobre precio vivienda
@@ -56,6 +57,11 @@ GESTORIA_EUR = 300.0    # Gestoría: importe fijo (€)
 
 # Opciones certificado energético (consumo y emisiones)
 CERT_ENERGETICO_OPCIONES = ["—", "A", "B", "C", "D", "E", "F", "G", "En trámite", "No disponible"]
+
+# Categorías de inmuebles en la agenda (estilo: Interesados=verde, En Estudio=azul)
+CATEGORIA_INTERESADOS = "Interesados"
+CATEGORIA_EN_ESTUDIO = "En Estudio"
+CATEGORIAS_INMUEBLE = [CATEGORIA_INTERESADOS, CATEGORIA_EN_ESTUDIO]
 
 
 def _cargar_imagen(path: Path):
@@ -323,6 +329,12 @@ def _precio_m2_inmueble(inv: dict) -> float | None:
         return None
     imp = float(inv.get("importe", 0) or 0)
     return imp / m2 if imp else None
+
+
+def _categoria_inmueble(inv: dict) -> str:
+    """Categoría del inmueble (Interesados | En Estudio). Por defecto Interesados."""
+    c = (inv.get("categoria") or "").strip()
+    return c if c in CATEGORIAS_INMUEBLE else CATEGORIA_INTERESADOS
 
 
 def _titulo_inmueble(inv: dict) -> str:
@@ -1052,8 +1064,10 @@ def _editor_inmueble(usuario_id: int, inv: dict):
             inmobiliaria = st.checkbox("Venta por inmobiliaria", value=bool(inv.get("inmobiliaria", False)), key=f"ei_inm_{inv_id}")
         comision_venta_pct = st.number_input("% comisión venta (inmobiliaria)", min_value=0.0, max_value=20.0, value=float(inv.get("comision_venta_pct", 0) or 0), step=0.5, key=f"ei_com_{inv_id}")
         url_anuncio = st.text_input("URL del anuncio", value=inv.get("url_anuncio", "") or "", key=f"ei_url_{inv_id}")
+        cat_actual = _categoria_inmueble(inv)
+        categoria = st.radio("Categoría", CATEGORIAS_INMUEBLE, horizontal=True, index=CATEGORIAS_INMUEBLE.index(cat_actual) if cat_actual in CATEGORIAS_INMUEBLE else 0, key=f"ei_cat_{inv_id}")
         if st.form_submit_button("Guardar cambios"):
-            inv_act = {**inv, "importe": importe, "localizacion": localizacion, "ano_construccion": int(ano_construccion), "m2_construidos": m2_construidos, "m2_utiles": m2_utiles, "habitaciones": int(habitaciones), "banos": int(banos), "certificado_consumo": certificado_consumo if certificado_consumo != "—" else "", "certificado_emisiones": certificado_emisiones if certificado_emisiones != "—" else "", "notas": (notas or "").strip(), "piscina": piscina, "sotano": sotano, "inmobiliaria": inmobiliaria, "comision_venta_pct": comision_venta_pct, "url_anuncio": url_anuncio.strip()}
+            inv_act = {**inv, "importe": importe, "localizacion": localizacion, "ano_construccion": int(ano_construccion), "m2_construidos": m2_construidos, "m2_utiles": m2_utiles, "habitaciones": int(habitaciones), "banos": int(banos), "certificado_consumo": certificado_consumo if certificado_consumo != "—" else "", "certificado_emisiones": certificado_emisiones if certificado_emisiones != "—" else "", "notas": (notas or "").strip(), "piscina": piscina, "sotano": sotano, "inmobiliaria": inmobiliaria, "comision_venta_pct": comision_venta_pct, "url_anuncio": url_anuncio.strip(), "categoria": categoria}
             if ghd.actualizar_inmueble(usuario_id, inv_act):
                 st.success("Inmueble actualizado.")
                 st.rerun()
@@ -1094,6 +1108,7 @@ def agenda_inmuebles(usuario_id: int):
         inmobiliaria = tipo_venta == "Inmobiliaria"
         comision_venta_pct = st.number_input("% comisión por la venta (solo inmobiliaria)", min_value=0.0, max_value=20.0, value=3.0, step=0.5)
         url_anuncio = st.text_input("URL del anuncio (portal inmobiliario)", placeholder="https://...")
+        categoria = st.radio("Categoría", CATEGORIAS_INMUEBLE, horizontal=True, index=0)
         if st.form_submit_button("Dar de alta inmueble"):
             inv = {
                 "importe": float(importe),
@@ -1111,6 +1126,8 @@ def agenda_inmuebles(usuario_id: int):
                 "inmobiliaria": bool(inmobiliaria),
                 "comision_venta_pct": float(comision_venta_pct) if inmobiliaria else 0.0,
                 "url_anuncio": (url_anuncio or "").strip(),
+                "categoria": categoria,
+                "fecha_creacion": datetime.now().isoformat(),
             }
             nuevo = ghd.añadir_inmueble(usuario_id, inv)
             if nuevo:
@@ -1123,81 +1140,146 @@ def agenda_inmuebles(usuario_id: int):
     if inmuebles:
         st.markdown("---")
         st.subheader("Inmuebles dados de alta")
-        for inv in inmuebles:
-            titulo = _titulo_inmueble(inv)
-            with st.expander(titulo):
-                fotos_urls = ghd.get_fotos_inmueble_urls(usuario_id, inv.get("id"))
+        # Filtros y ordenación
+        ord_opciones = [
+            "Recientes (fecha creación)",
+            "Precio (menor a mayor)",
+            "Precio (mayor a menor)",
+            "Categoría (Interesados → En Estudio)",
+            "Piscina (sí primero)",
+            "Sótano (sí primero)",
+            "Habitaciones (más primero)",
+            "m² útiles (mayor primero)",
+            "€/m² (menor primero)",
+        ]
+        f1, f2, f3 = st.columns(3)
+        with f1:
+            filtro_categoria = st.selectbox("Filtrar por categoría", ["Todas", CATEGORIA_INTERESADOS, CATEGORIA_EN_ESTUDIO], key="filtro_cat_inm")
+        with f2:
+            filtro_piscina = st.checkbox("Solo con piscina", key="filtro_piscina_inm")
+            filtro_sotano = st.checkbox("Solo con sótano", key="filtro_sotano_inm")
+        with f3:
+            orden_por = st.selectbox("Ordenar por", ord_opciones, key="orden_inm")
+        # Aplicar filtros
+        lista = list(inmuebles)
+        if filtro_categoria != "Todas":
+            lista = [inv for inv in lista if _categoria_inmueble(inv) == filtro_categoria]
+        if filtro_piscina:
+            lista = [inv for inv in lista if inv.get("piscina")]
+        if filtro_sotano:
+            lista = [inv for inv in lista if inv.get("sotano")]
+        # Ordenar (Recientes: por fecha_creacion desc; si no hay fecha, por id desc)
+        def _clave_recientes(inv):
+            fc = inv.get("fecha_creacion") or ""
+            return (fc, -(inv.get("id") or 0))
+        if orden_por == "Recientes (fecha creación)":
+            lista = sorted(lista, key=_clave_recientes, reverse=True)
+        elif orden_por == "Precio (menor a mayor)":
+            lista = sorted(lista, key=lambda i: float(i.get("importe") or 0))
+        elif orden_por == "Precio (mayor a menor)":
+            lista = sorted(lista, key=lambda i: float(i.get("importe") or 0), reverse=True)
+        elif orden_por == "Categoría (Interesados → En Estudio)":
+            lista = sorted(lista, key=lambda i: 0 if _categoria_inmueble(i) == CATEGORIA_INTERESADOS else 1)
+        elif orden_por == "Piscina (sí primero)":
+            lista = sorted(lista, key=lambda i: (not i.get("piscina"),))
+        elif orden_por == "Sótano (sí primero)":
+            lista = sorted(lista, key=lambda i: (not i.get("sotano"),))
+        elif orden_por == "Habitaciones (más primero)":
+            lista = sorted(lista, key=lambda i: -(i.get("habitaciones") or 0))
+        elif orden_por == "m² útiles (mayor primero)":
+            lista = sorted(lista, key=lambda i: -(float(i.get("m2_utiles") or 0)))
+        elif orden_por == "€/m² (menor primero)":
+            lista = sorted(lista, key=lambda i: (float(_precio_m2_inmueble(i) or 0) or 1e9))
+        for inv in lista:
+            cat = _categoria_inmueble(inv)
+            emoji = "🟢" if cat == CATEGORIA_INTERESADOS else "🔵"
+            titulo = f"{emoji} {_titulo_inmueble(inv)}"
+            fotos_urls = ghd.get_fotos_inmueble_urls(usuario_id, inv.get("id"))
+            col_thumb, col_exp = st.columns([0.08, 0.92])
+            with col_thumb:
                 if fotos_urls:
                     try:
-                        st.image(fotos_urls[0], caption="Foto del anuncio", use_container_width=True)
+                        st.image(fotos_urls[0], use_container_width=True)
                     except Exception:
-                        pass
-                hab = inv.get("habitaciones")
-                ban = inv.get("banos")
-                p_m2 = _precio_m2_inmueble(inv)
-                cert_consumo = inv.get("certificado_consumo") or inv.get("certificado_energetico") or "—"
-                cert_emisiones = inv.get("certificado_emisiones") or inv.get("certificado_energetico") or "—"
-                p_m2_str = f" · **{p_m2:,.0f} €/m²**" if p_m2 is not None else ""
-                st.caption(f"ID: {inv.get('id')} · m² útiles: {inv.get('m2_utiles')} · Año: {inv.get('ano_construccion')} · {hab or 0} hab. · {ban or 0} baños · Cert. consumo: {cert_consumo} · emisiones: {cert_emisiones}{p_m2_str}")
-                if inv.get("notas"):
-                    st.caption(f"📝 Notas: {inv.get('notas')}")
-                d = _desglose_gastos_compra(inv)
-                st.caption(f"Coste total compra: **{d['total']:,.0f} €** (precio + comisión + ITP {ITP_PCT}% + notaría + registro + gestoría {GESTORIA_EUR:.0f} €)")
-                if inv.get("url_anuncio"):
-                    st.markdown(f"[Ver anuncio]({inv['url_anuncio']})")
-                # Obtener fotos desde URL y que el usuario elija cuáles añadir
-                inv_id = inv.get("id")
-                if inv.get("url_anuncio"):
-                    if "idealista" in (inv.get("url_anuncio") or "").lower():
-                        st.caption("Idealista suele bloquear peticiones directas (403). Configura **APIFY_TOKEN** o **ZENROWS_API_KEY** en secrets (ver `docs/IDEALISTA_SCRAPING.md`).")
-                    if st.button("🖼 Obtener fotos desde anuncio", key=f"btn_obt_fotos_{inv_id}"):
+                        st.caption("—")
+                else:
+                    st.caption("—")
+            with col_exp:
+                with st.expander(titulo):
+                    # Badge de categoría con color (verde #083 / azul #038)
+                    color = "#083" if cat == CATEGORIA_INTERESADOS else "#038"
+                    st.markdown(f'<span style="color:{color}; font-weight:bold;">{cat}</span>', unsafe_allow_html=True)
+                    if fotos_urls:
                         try:
-                            with st.spinner("Extrayendo imágenes del anuncio…"):
-                                urls = extraer_urls_imagenes_anuncio(inv["url_anuncio"])
-                            if urls:
-                                st.session_state.fotos_extraidas = {"inmueble_id": inv_id, "urls": urls}
-                            else:
-                                st.warning("No se encontraron imágenes en el anuncio o el portal no permite extraerlas.")
-                        except ValueError as e:
-                            st.error(str(e))
-                        st.rerun()
-                fotos_extraidas = st.session_state.get("fotos_extraidas")
-                if fotos_extraidas and fotos_extraidas.get("inmueble_id") == inv_id and fotos_extraidas.get("urls"):
-                    urls_list = fotos_extraidas["urls"]
-                    st.markdown("**Selecciona las fotos a añadir a la ficha:**")
-                    # Grid de imágenes con checkbox cada una (máx 20 para no saturar)
-                    urls_show = urls_list[:20]
-                    cols = 4
-                    seleccionados = []
-                    for i, url in enumerate(urls_show):
-                        col_ix = i % cols
-                        if col_ix == 0:
-                            row = st.columns(cols)
-                        with row[col_ix]:
+                            st.image(fotos_urls[0], caption="Foto del anuncio", use_container_width=True)
+                        except Exception:
+                            pass
+                    hab = inv.get("habitaciones")
+                    ban = inv.get("banos")
+                    p_m2 = _precio_m2_inmueble(inv)
+                    cert_consumo = inv.get("certificado_consumo") or inv.get("certificado_energetico") or "—"
+                    cert_emisiones = inv.get("certificado_emisiones") or inv.get("certificado_energetico") or "—"
+                    p_m2_str = f" · **{p_m2:,.0f} €/m²**" if p_m2 is not None else ""
+                    st.caption(f"ID: {inv.get('id')} · m² útiles: {inv.get('m2_utiles')} · Año: {inv.get('ano_construccion')} · {hab or 0} hab. · {ban or 0} baños · Cert. consumo: {cert_consumo} · emisiones: {cert_emisiones}{p_m2_str}")
+                    if inv.get("notas"):
+                        st.caption(f"📝 Notas: {inv.get('notas')}")
+                    d = _desglose_gastos_compra(inv)
+                    st.caption(f"Coste total compra: **{d['total']:,.0f} €** (precio + comisión + ITP {ITP_PCT}% + notaría + registro + gestoría {GESTORIA_EUR:.0f} €)")
+                    if inv.get("url_anuncio"):
+                        st.markdown(f"[Ver anuncio]({inv['url_anuncio']})")
+                    # Obtener fotos desde URL y que el usuario elija cuáles añadir
+                    inv_id = inv.get("id")
+                    if inv.get("url_anuncio"):
+                        if "idealista" in (inv.get("url_anuncio") or "").lower():
+                            st.caption("Idealista suele bloquear peticiones directas (403). Configura **APIFY_TOKEN** o **ZENROWS_API_KEY** en secrets (ver `docs/IDEALISTA_SCRAPING.md`).")
+                        if st.button("🖼 Obtener fotos desde anuncio", key=f"btn_obt_fotos_{inv_id}"):
                             try:
-                                st.image(url, use_column_width=True)
-                            except Exception:
-                                st.caption(f"Imagen {i+1}")
-                            if st.checkbox("Añadir", key=f"foto_sel_{inv_id}_{i}"):
-                                seleccionados.append((i, url))
-                    if st.button("Añadir seleccionadas a la ficha", key=f"btn_add_fotos_{inv_id}"):
-                        if not seleccionados:
-                            st.warning("Marca al menos una foto para añadir.")
-                        else:
-                            existentes = len(ghd.get_fotos_inmueble_urls(usuario_id, inv_id))
-                            subidas = 0
-                            for idx, (_, url) in enumerate(seleccionados):
-                                b = _descargar_imagen_bytes(url)
-                                if b:
-                                    ghd.subir_foto_inmueble(usuario_id, inv_id, b, existentes + idx + 1)
-                                    subidas += 1
-                            st.session_state.fotos_extraidas = None
-                            st.success(f"Se han añadido {subidas} foto(s) a la ficha.")
+                                with st.spinner("Extrayendo imágenes del anuncio…"):
+                                    urls = extraer_urls_imagenes_anuncio(inv["url_anuncio"])
+                                if urls:
+                                    st.session_state.fotos_extraidas = {"inmueble_id": inv_id, "urls": urls}
+                                else:
+                                    st.warning("No se encontraron imágenes en el anuncio o el portal no permite extraerlas.")
+                            except ValueError as e:
+                                st.error(str(e))
                             st.rerun()
-                    if st.button("Cancelar", key=f"btn_cancel_fotos_{inv_id}"):
-                        st.session_state.fotos_extraidas = None
-                        st.rerun()
-                _editor_inmueble(usuario_id, inv)
+                    fotos_extraidas = st.session_state.get("fotos_extraidas")
+                    if fotos_extraidas and fotos_extraidas.get("inmueble_id") == inv_id and fotos_extraidas.get("urls"):
+                        urls_list = fotos_extraidas["urls"]
+                        st.markdown("**Selecciona las fotos a añadir a la ficha:**")
+                        # Grid de imágenes con checkbox cada una (máx 20 para no saturar)
+                        urls_show = urls_list[:20]
+                        cols = 4
+                        seleccionados = []
+                        for i, url in enumerate(urls_show):
+                            col_ix = i % cols
+                            if col_ix == 0:
+                                row = st.columns(cols)
+                            with row[col_ix]:
+                                try:
+                                    st.image(url, use_column_width=True)
+                                except Exception:
+                                    st.caption(f"Imagen {i+1}")
+                                if st.checkbox("Añadir", key=f"foto_sel_{inv_id}_{i}"):
+                                    seleccionados.append((i, url))
+                        if st.button("Añadir seleccionadas a la ficha", key=f"btn_add_fotos_{inv_id}"):
+                            if not seleccionados:
+                                st.warning("Marca al menos una foto para añadir.")
+                            else:
+                                existentes = len(ghd.get_fotos_inmueble_urls(usuario_id, inv_id))
+                                subidas = 0
+                                for idx, (_, url) in enumerate(seleccionados):
+                                    b = _descargar_imagen_bytes(url)
+                                    if b:
+                                        ghd.subir_foto_inmueble(usuario_id, inv_id, b, existentes + idx + 1)
+                                        subidas += 1
+                                st.session_state.fotos_extraidas = None
+                                st.success(f"Se han añadido {subidas} foto(s) a la ficha.")
+                                st.rerun()
+                        if st.button("Cancelar", key=f"btn_cancel_fotos_{inv_id}"):
+                            st.session_state.fotos_extraidas = None
+                            st.rerun()
+                    _editor_inmueble(usuario_id, inv)
     else:
         st.info("No hay inmuebles. Usa el formulario de arriba para dar de alta una vivienda.")
 
@@ -1595,22 +1677,28 @@ def main():
         st.session_state.inmueble_seleccionado = None
         st.rerun()
 
-    # Selector de inmueble para simular hipoteca
+    # Selector de inmueble: Interesados (verde) primero, separador, En Estudio (azul)
     inmuebles = ghd.get_inmuebles(u["id"])
-    opts_inv = ["— Ninguno —"] + [_titulo_inmueble(inv) for inv in inmuebles]
+    interesados = [inv for inv in inmuebles if _categoria_inmueble(inv) == CATEGORIA_INTERESADOS]
+    en_estudio = [inv for inv in inmuebles if _categoria_inmueble(inv) == CATEGORIA_EN_ESTUDIO]
+    SEPARADOR_EN_ESTUDIO = "———— En Estudio ————"
+    opts_inv = ["— Ninguno —"]
+    lista_inv_ordenada = [None]
+    for inv in interesados:
+        opts_inv.append("🟢 " + _titulo_inmueble(inv))
+        lista_inv_ordenada.append(inv)
+    opts_inv.append(SEPARADOR_EN_ESTUDIO)
+    lista_inv_ordenada.append(None)
+    for inv in en_estudio:
+        opts_inv.append("🔵 " + _titulo_inmueble(inv))
+        lista_inv_ordenada.append(inv)
     sel_inv = st.sidebar.selectbox(
         "Inmueble para simular hipoteca",
         opts_inv,
         key="sel_inmueble",
     )
-    if sel_inv == "— Ninguno —":
-        st.session_state.inmueble_seleccionado = None
-    else:
-        idx_inv = opts_inv.index(sel_inv) - 1
-        if 0 <= idx_inv < len(inmuebles):
-            st.session_state.inmueble_seleccionado = inmuebles[idx_inv]
-        else:
-            st.session_state.inmueble_seleccionado = None
+    idx_sel = opts_inv.index(sel_inv) if sel_inv in opts_inv else 0
+    st.session_state.inmueble_seleccionado = lista_inv_ordenada[idx_sel] if idx_sel < len(lista_inv_ordenada) else None
     if st.session_state.inmueble_seleccionado:
         inv = st.session_state.inmueble_seleccionado
         d = _desglose_gastos_compra(inv)
@@ -1666,6 +1754,7 @@ def main():
         st.subheader("Changelog")
         st.markdown(f"**Versión actual: {VERSION_APP}**")
         st.markdown("""
+        - **1.7.0** — Agenda de inmuebles: categorías Interesados / En Estudio (estilo verde/azul); filtros por categoría, piscina y sótano; ordenar por recientes (fecha creación), precio, categoría, piscina, sótano, habitaciones, m² o €/m²; miniatura de la foto en la línea del desplegable; fecha de creación al dar de alta.
         - **1.6.0** — Resaltado en verde de todos los campos de bonificación (bonif., bonificado, bonificación) en alta y edición de hipotecas.
         - **1.5.0** — Resaltado en rojo de campos de comisiones y costes (comisión amortización, mantenimiento, tasación, seguros, alarma, protección pagos, pensión, comisión de apertura). Comisión de apertura e importe bonificado en la firma en formularios.
         - **1.4.0** — Gastos de compra completos: ITP 7%, notaría y registro (10% del ITP cada uno), gestoría 300 €. Desglose en sidebar con total de gastos. Inmuebles: certificado energético, habitaciones, baños, notas; título con precio/m².
