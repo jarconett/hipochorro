@@ -832,7 +832,7 @@ def _editor_hipoteca(usuario_id: int, h: dict):
             key=f"dup_tae_{hid}",
         )
 
-    if st.button("Duplicar ahora", key=f"dup_btn_{hid}", use_container_width=True):
+    if st.button("Duplicar ahora", key=f"dup_btn_{hid}", width="stretch"):
         copia = {k: v for k, v in h.items() if k != "id"}
         copia["nombre_hipoteca"] = nombre_copia.strip() or f"{h.get('nombre_hipoteca','')} (copia)"
         copia["tin"] = float(tin_copia)
@@ -1405,7 +1405,7 @@ def agenda_inmuebles(usuario_id: int):
             with col_thumb:
                 if fotos_urls:
                     try:
-                        st.image(fotos_urls[0], use_container_width=True)
+                        st.image(fotos_urls[0], width="stretch")
                     except Exception:
                         st.caption("—")
                 else:
@@ -1421,7 +1421,7 @@ def agenda_inmuebles(usuario_id: int):
                         st.caption(f"🚗 **{minutos_destino} min** en coche a {destino_gps}")
                     if fotos_urls:
                         try:
-                            st.image(fotos_urls[0], caption="Foto del anuncio", use_container_width=True)
+                            st.image(fotos_urls[0], caption="Foto del anuncio", width="stretch")
                         except Exception:
                             pass
                     hab = inv.get("habitaciones")
@@ -1508,7 +1508,7 @@ def agenda_inmuebles(usuario_id: int):
                                 row = st.columns(cols)
                             with row[col_ix]:
                                 try:
-                                    st.image(url, use_column_width=True)
+                                    st.image(url, width="stretch")
                                 except Exception:
                                     st.caption(f"Imagen {i+1}")
                                 if st.checkbox("Añadir", key=f"foto_sel_{inv_id}_{i}"):
@@ -1777,7 +1777,7 @@ def comparador(usuario_id: int):
             "Coste total (€)": round(r.get("coste_total", 0), 2),
         })
     df_ranking = pd.DataFrame(ranking_rows)
-    st.dataframe(df_ranking, use_container_width=True, hide_index=True)
+    st.dataframe(df_ranking, width="stretch", hide_index=True)
 
     st.markdown("#### Exportar ranking")
     ranking_csv = df_ranking.to_csv(index=False).encode("utf-8")
@@ -1786,7 +1786,7 @@ def comparador(usuario_id: int):
         data=ranking_csv,
         file_name="ranking_hipotecas.csv",
         mime="text/csv",
-        use_container_width=True,
+        width="stretch",
     )
     try:
         bio_rank = BytesIO()
@@ -1797,7 +1797,7 @@ def comparador(usuario_id: int):
             data=bio_rank.getvalue(),
             file_name="ranking_hipotecas.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            use_container_width=True,
+            width="stretch",
         )
     except Exception:
         st.caption("No se pudo generar Excel del ranking (falta `openpyxl` o no está disponible en el entorno).")
@@ -1920,7 +1920,7 @@ def comparador(usuario_id: int):
         "extra_año": "Amortización extra (€)",
         "deuda_restante": "Deuda restante (€)",
     })
-    st.dataframe(df, use_container_width=True, hide_index=True)
+    st.dataframe(df, width="stretch", hide_index=True)
 
     st.markdown("### Exportar")
     csv_bytes = df.to_csv(index=False).encode("utf-8")
@@ -1950,7 +1950,7 @@ def main():
     if logo_img is not None:
         c1, c2, c3 = st.columns([1, 2, 1])
         with c2:
-            st.image(logo_img, use_container_width=True)
+            st.image(logo_img, width="stretch")
     st.title("Hipochorro")
     st.caption("Simulador y comparador de hipotecas en España — datos en GitHub")
 
