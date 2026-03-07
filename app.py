@@ -115,9 +115,11 @@ st.markdown(
     [data-testid="stSidebar"] { border-right: 1px solid rgba(0,0,0,0.08); }
     /* Botones primarios: más contraste */
     .stButton > button { font-weight: 500; border-radius: 0.5rem; }
-    /* Tabs: indicador más claro */
-    .stTabs [data-baseweb="tab-list"] { gap: 0.25rem; }
+    /* Tabs: indicador más claro; barra fija al scroll para una sola barra visible */
+    .stTabs [data-baseweb="tab-list"] { gap: 0.25rem; position: sticky; top: 0; z-index: 999; background: var(--background-color, #f8fafc); padding-bottom: 0.25rem; margin-bottom: 0.5rem; box-shadow: 0 1px 0 rgba(0,0,0,0.05); }
     .stTabs [data-baseweb="tab"] { padding: 0.5rem 1rem; border-radius: 0.5rem; }
+    /* Si el layout duplica el bloque de tabs (p. ej. en scroll), ocultar el segundo */
+    [data-testid="stTabs"] ~ [data-testid="stTabs"] { display: none !important; }
     </style>
     """,
     unsafe_allow_html=True,
