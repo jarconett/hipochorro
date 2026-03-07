@@ -1358,18 +1358,19 @@ def _retencion_ahorro(rendimiento_bruto: float) -> float:
 def _ahorro_amortizar(
     h: dict,
     importe_amort_anual: float,
-) -> tuple[float, float, float]:
+) -> tuple[float, float, float, int]:
     """
     Calcula ahorro neto por amortizar: intereses evitados - comisiones por amortización.
     Tiene en cuenta comisión bonificada (años bonif) vs estándar.
-    Devuelve (intereses_ahorrados, comisiones_totales, ahorro_neto).
+    Devuelve (intereses_ahorrados, comisiones_totales, ahorro_neto, meses_hasta_cancelar).
+    meses_hasta_cancelar = número de meses hasta liquidar la hipoteca con la amortización extra (para comparar con la inversión en el mismo periodo).
     """
     if importe_amort_anual <= 0:
-        return (0.0, 0.0, 0.0)
+        return (0.0, 0.0, 0.0, 0)
     capital = float(h.get("cantidad_solicitada", 0) or 0)
     anos = int(h.get("duracion_anos", 0) or 0)
     if capital <= 0 or anos <= 0:
-        return (0.0, 0.0, 0.0)
+        return (0.0, 0.0, 0.0, 0)
     tin_base = _get_tin_base(h)
     plan_tin_anual = get_plan_tin_anual(h, anos)
     tin_efectivo = float(plan_tin_anual[0]) if plan_tin_anual else tin_base
@@ -1398,8 +1399,24 @@ def _ahorro_amortizar(
         pct = comision_bonif if (anos_bonif and ano <= anos_bonif) else comision_estandar
         comisiones_totales += extra * (pct / 100.0)
 
+    meses_hasta_cancelar = sum(int(fila.get("meses_pagados", 0) or 0) for fila in cuadro_con)
     ahorro_neto = intereses_ahorrados - comisiones_totales
-    return (round(intereses_ahorrados, 2), round(comisiones_totales, 2), round(ahorro_neto, 2))
+    return (round(intereses_ahorrados, 2), round(comisiones_totales, 2), round(ahorro_neto, 2), meses_hasta_cancelar)
+
+
+def _valor_futuro_aportaciones_mensuales(aportacion_mensual: float, rendimiento_anual_pct: float, num_meses: int) -> float:
+    """
+    Valor futuro de una serie de aportaciones mensuales constantes con capitalización mensual.
+    FV = P * (((1+r)^n - 1) / r), con r = tipo mensual, n = número de meses, P = aportación mensual.
+    """
+    if num_meses <= 0 or aportacion_mensual <= 0:
+        return 0.0
+    r_anual = rendimiento_anual_pct / 100.0
+    r_mensual = r_anual / 12.0
+    if abs(r_mensual) < 1e-12:
+        return round(aportacion_mensual * num_meses, 2)
+    fv = aportacion_mensual * (((1 + r_mensual) ** num_meses - 1) / r_mensual)
+    return round(fv, 2)
 
 
 def _resumen_costes_hipoteca(
@@ -1993,13 +2010,13 @@ def _tab_comparador_inmuebles(usuario_id: int):
 
 
 def _tab_amortizar_o_invertir(usuario_id: int):
-    """Pestaña ¿Amortizar o Invertir?: compara ahorro por amortización (con comisiones) vs beneficio neto de inversión (con retención)."""
+    """Pestaña ¿Amortizar o Invertir?: compara total intereses ahorrados (amortizando) vs total acumulado invirtiendo la misma cantidad mensual durante el mismo periodo."""
     hipotecas = ghd.get_hipotecas(usuario_id)
     if not hipotecas:
         st.info("No hay hipotecas dadas de alta. Ve a **Alta de hipotecas** para añadir al menos una.")
         return
     st.subheader("¿Amortizar o Invertir?")
-    st.caption("Compara el ahorro neto por amortizar (intereses evitados menos comisiones) con el beneficio neto de invertir (después de retención por rentas del ahorro).")
+    st.caption("Compara el **total de intereses ahorrados** por amortizar (en toda la vida del préstamo) con el **total acumulado** de invertir la misma cantidad mensual durante el mismo periodo (con el % de rendimiento indicado).")
     opts_hipo = [f"{h.get('nombre_entidad', '')} — {h.get('nombre_hipoteca', '')}" for h in hipotecas]
     sel_hipo = st.selectbox("Selecciona la hipoteca", opts_hipo, key="amort_inv_hipo")
     idx_hipo = opts_hipo.index(sel_hipo) if sel_hipo in opts_hipo else 0
@@ -2007,59 +2024,73 @@ def _tab_amortizar_o_invertir(usuario_id: int):
     importe_amort = st.number_input(
         "Importe amortización anual (€)",
         min_value=0.0,
-        value=3000.0,
+        value=3192.0,
         step=500.0,
         key="amort_inv_importe",
-        help="Cantidad que destinarías cada año a amortizar.",
+        help="Cantidad que destinarías cada año a amortizar (ej. 266 €/mes = 3.192 €/año). Es la misma que invertirías cada mes (dividida entre 12).",
     )
     st.markdown("---")
-    st.markdown("**Inversión alternativa** (depósito o fondo)")
-    dinero_invertido = st.number_input("Dinero invertido (€)", min_value=0.0, value=3000.0, step=500.0, key="amort_inv_capital")
-    modo_rendimiento = st.radio(
-        "Indicar rendimiento como",
-        ["% de rendimiento", "Importe obtenido (total al vencimiento)"],
-        horizontal=True,
-        key="amort_inv_modo",
+    st.markdown("**Inversión alternativa** (misma cantidad mensual, mismo periodo)")
+    pct_rendimiento = st.number_input(
+        "% rendimiento anual de la inversión",
+        min_value=0.0,
+        max_value=100.0,
+        value=4.0,
+        step=0.25,
+        format="%.2f",
+        key="amort_inv_pct",
+        help="Rentabilidad anual del depósito o fondo (ej. 4%). Se aplica al total acumulado para calcular la retención por rentas del ahorro.",
     )
-    if modo_rendimiento == "% de rendimiento":
-        pct_rendimiento = st.number_input("% rendimiento", min_value=0.0, max_value=100.0, value=3.0, step=0.25, format="%.2f", key="amort_inv_pct")
-        rendimiento_bruto = dinero_invertido * (pct_rendimiento / 100.0) if dinero_invertido else 0.0
-    else:
-        importe_obtenido = st.number_input("Importe obtenido (€)", min_value=0.0, value=3090.0, step=50.0, key="amort_inv_obtenido")
-        rendimiento_bruto = max(0.0, float(importe_obtenido) - dinero_invertido) if dinero_invertido else 0.0
 
-    # Cálculo amortización
-    intereses_ahorrados, comisiones_totales, ahorro_neto_amort = _ahorro_amortizar(h, importe_amort)
-    # Cálculo inversión
-    retencion = _retencion_ahorro(rendimiento_bruto)
-    beneficio_neto_inv = round(rendimiento_bruto - retencion, 2)
+    # Cálculo amortización: total intereses ahorrados y meses hasta cancelar
+    intereses_ahorrados, comisiones_totales, ahorro_neto_amort, meses_hasta_cancelar = _ahorro_amortizar(h, importe_amort)
+
+    # Inversión: valor futuro de aportaciones mensuales (importe_amort/12 €/mes) durante los mismos meses que tardaría en cancelar la hipoteca
+    aportacion_mensual = importe_amort / 12.0 if importe_amort else 0.0
+    total_acumulado_inv = _valor_futuro_aportaciones_mensuales(aportacion_mensual, pct_rendimiento, meses_hasta_cancelar) if meses_hasta_cancelar and aportacion_mensual else 0.0
+    aportaciones_totales = round(aportacion_mensual * meses_hasta_cancelar, 2) if meses_hasta_cancelar else 0.0
+    ganancia_bruta_inv = round(total_acumulado_inv - aportaciones_totales, 2) if total_acumulado_inv else 0.0
+    retencion = _retencion_ahorro(ganancia_bruta_inv)
+    beneficio_neto_inv = round(ganancia_bruta_inv - retencion, 2)
+
+    anos_inv = meses_hasta_cancelar / 12.0 if meses_hasta_cancelar else 0
 
     col_amort, col_inv = st.columns(2)
     with col_amort:
         st.markdown("### 📉 Amortizar")
-        st.metric("Intereses ahorrados (vida préstamo)", f"{intereses_ahorrados:.0f} €")
+        st.metric("Total intereses ahorrados (vida del préstamo)", f"{intereses_ahorrados:.0f} €")
         st.metric("Comisiones por amortización", f"{comisiones_totales:.0f} €")
         st.metric("**Ahorro neto**", f"**{ahorro_neto_amort:.0f} €**")
+        if meses_hasta_cancelar:
+            st.caption(f"Hipoteca saldada en {meses_hasta_cancelar} meses ({anos_inv:.1f} años) con la amortización extra.")
     with col_inv:
         st.markdown("### 📈 Invertir")
-        st.metric("Rendimiento bruto", f"{rendimiento_bruto:.0f} €")
+        st.metric("Total acumulado (al mismo plazo)", f"{total_acumulado_inv:.0f} €")
+        st.metric("Aportaciones totales", f"{aportaciones_totales:.0f} €")
+        st.metric("Ganancia bruta", f"{ganancia_bruta_inv:.0f} €")
         st.metric("Retención (rentas ahorro)", f"{retencion:.0f} €")
         st.metric("**Beneficio neto**", f"**{beneficio_neto_inv:.0f} €**")
+        if meses_hasta_cancelar and aportacion_mensual:
+            st.caption(f"Invirtiendo {aportacion_mensual:.0f} €/mes al {pct_rendimiento}% durante {meses_hasta_cancelar} meses ({anos_inv:.1f} años).")
 
     st.markdown("---")
+    diferencia_vs_amort = round(total_acumulado_inv - intereses_ahorrados, 0) if total_acumulado_inv and intereses_ahorrados else 0.0
     if ahorro_neto_amort > beneficio_neto_inv:
         st.success(f"**En estos datos, sale a cuenta amortizar:** ahorro neto {ahorro_neto_amort:.0f} € frente a beneficio neto por invertir {beneficio_neto_inv:.0f} €.")
     elif beneficio_neto_inv > ahorro_neto_amort:
-        st.success(f"**En estos datos, sale a cuenta invertir:** beneficio neto {beneficio_neto_inv:.0f} € frente a ahorro por amortizar {ahorro_neto_amort:.0f} €.")
+        st.success(
+            f"**En estos datos, sale a cuenta invertir:** beneficio neto {beneficio_neto_inv:.0f} € frente a ahorro por amortizar {ahorro_neto_amort:.0f} €. "
+            f"El total acumulado de la inversión ({total_acumulado_inv:.0f} €) es {diferencia_vs_amort:.0f} € más que los intereses que te ahorrarías amortizando ({intereses_ahorrados:.0f} €)."
+        )
     else:
         st.info("Ambas opciones dan un resultado equivalente con los datos introducidos.")
     st.markdown("**Comparativa visual**")
     df_comp = pd.DataFrame(
         {"Neto (€)": [ahorro_neto_amort, beneficio_neto_inv]},
-        index=["Amortizar", "Invertir"],
+        index=["Amortizar (ahorro neto)", "Invertir (beneficio neto)"],
     )
     st.bar_chart(df_comp, height=280)
-    st.caption("Amortizar: ahorro total en vida del préstamo (intereses evitados − comisiones). Invertir: beneficio neto con los datos introducidos (después de retención).")
+    st.caption("Amortizar: total intereses ahorrados en vida del préstamo menos comisiones. Invertir: misma cantidad mensual durante el mismo periodo; beneficio neto = ganancia bruta menos retención por rentas del ahorro.")
     if st.button("Recalcular", key="amort_inv_recalcular", help="Vuelve a calcular con los valores actuales (útil si has cambiado cantidades)."):
         st.rerun()
 
