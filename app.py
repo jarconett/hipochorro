@@ -115,9 +115,25 @@ st.markdown(
     [data-testid="stSidebar"] { border-right: 1px solid rgba(0,0,0,0.08); }
     /* Botones primarios: más contraste */
     .stButton > button { font-weight: 500; border-radius: 0.5rem; }
-    /* Tabs: indicador más claro; barra fija al scroll para una sola barra visible */
-    .stTabs [data-baseweb="tab-list"] { gap: 0.25rem; position: sticky; top: 0; z-index: 999; background: var(--background-color, #f8fafc); padding-bottom: 0.25rem; margin-bottom: 0.5rem; box-shadow: 0 1px 0 rgba(0,0,0,0.05); }
+    /* Tabs: barra fija al scroll con contraste correcto (fondo y texto legibles) */
+    .stTabs [data-baseweb="tab-list"] {
+      gap: 0.25rem; position: sticky; top: 0; z-index: 999;
+      background: #f1f5f9 !important;
+      padding-bottom: 0.25rem; margin-bottom: 0.5rem;
+      box-shadow: 0 1px 0 rgba(0,0,0,0.08);
+    }
+    .stTabs [data-baseweb="tab-list"] [data-baseweb="tab"],
+    .stTabs [data-baseweb="tab-list"] span { color: #1e293b !important; }
     .stTabs [data-baseweb="tab"] { padding: 0.5rem 1rem; border-radius: 0.5rem; }
+    .stTabs [data-baseweb="tab"][aria-selected="true"],
+    .stTabs [data-baseweb="tab"][aria-selected="true"] span { color: var(--primary-color, #0d47a1) !important; font-weight: 600; }
+    /* Tema oscuro: barra sticky con colores dark (Streamlit aplica data-theme en un ancestro) */
+    [data-theme="dark"] .stTabs [data-baseweb="tab-list"] {
+      background: #1e293b !important;
+    }
+    [data-theme="dark"] .stTabs [data-baseweb="tab-list"] [data-baseweb="tab"]:not([aria-selected="true"]),
+    [data-theme="dark"] .stTabs [data-baseweb="tab-list"] span { color: #f1f5f9 !important; }
+    [data-theme="dark"] .stTabs [data-baseweb="tab"][aria-selected="true"] span { color: #64b5f6 !important; }
     /* Si el layout duplica el bloque de tabs (p. ej. en scroll), ocultar el segundo */
     [data-testid="stTabs"] ~ [data-testid="stTabs"] { display: none !important; }
     </style>
