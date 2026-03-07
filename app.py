@@ -399,14 +399,18 @@ def _categoria_inmueble(inv: dict) -> str:
     return c if c in CATEGORIAS_INMUEBLE else CATEGORIA_INTERESADOS
 
 
-def _titulo_inmueble(inv: dict) -> str:
-    """Título para listado y selector: localización — precio € — precio/m² (si hay m²)."""
+def _titulo_inmueble(inv: dict, duracion_min: float | None = None) -> str:
+    """Título para listado y selector: localización — precio € — precio/m² (si hay m²) — XX min (si hay duración)."""
     loc = inv.get("localizacion", "") or "Sin ubicación"
     imp = float(inv.get("importe", 0) or 0)
     p = _precio_m2_inmueble(inv)
     if p is not None:
-        return f"{loc} — {imp:.0f} € — {p:.0f} €/m²"
-    return f"{loc} — {imp:.0f} €"
+        base = f"{loc} — {imp:.0f} € — {p:.0f} €/m²"
+    else:
+        base = f"{loc} — {imp:.0f} €"
+    if duracion_min is not None:
+        base += f" — {duracion_min:.0f} min."
+    return base
 
 
 def _geocode_nominatim(direccion: str) -> tuple[float, float] | None:
@@ -1419,7 +1423,8 @@ def agenda_inmuebles(usuario_id: int):
         for inv in lista:
             cat = _categoria_inmueble(inv)
             emoji = "🟢" if cat == CATEGORIA_INTERESADOS else "🔵"
-            titulo = f"{emoji} {_titulo_inmueble(inv)}"
+            d_min = _duracion_minutos_a_destino(inv, destino_gps)
+            titulo = f"{emoji} {_titulo_inmueble(inv, d_min)}"
             fotos_urls = ghd.get_fotos_inmueble_urls(usuario_id, inv.get("id"))
             col_thumb, col_exp = st.columns([0.08, 0.92])
             with col_thumb:
@@ -2038,12 +2043,14 @@ def main():
     opts_inv = ["— Ninguno —"]
     lista_inv_ordenada = [None]
     for inv in interesados:
-        opts_inv.append("🟢 " + _titulo_inmueble(inv))
+        d_min = _duracion_minutos_a_destino(inv, gps_destino)
+        opts_inv.append("🟢 " + _titulo_inmueble(inv, d_min))
         lista_inv_ordenada.append(inv)
     opts_inv.append(SEPARADOR_EN_ESTUDIO)
     lista_inv_ordenada.append(None)
     for inv in en_estudio:
-        opts_inv.append("🔵 " + _titulo_inmueble(inv))
+        d_min = _duracion_minutos_a_destino(inv, gps_destino)
+        opts_inv.append("🔵 " + _titulo_inmueble(inv, d_min))
         lista_inv_ordenada.append(inv)
     sel_inv = st.sidebar.selectbox(
         "Inmueble para simular hipoteca",
