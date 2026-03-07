@@ -1636,38 +1636,45 @@ def _editor_inmueble(usuario_id: int, inv: dict):
         url_inmobiliaria = st.text_input("URL inmobiliaria", value=inv.get("url_inmobiliaria", "") or "", key=f"ei_url_inm_{inv_id}", placeholder="https://...", help="Web propia de la inmobiliaria con el anuncio; suele permitir extraer las imágenes con más facilidad.")
         cat_actual = _categoria_inmueble(inv)
         categoria = st.radio("Categoría", CATEGORIAS_INMUEBLE, horizontal=True, index=CATEGORIAS_INMUEBLE.index(cat_actual) if cat_actual in CATEGORIAS_INMUEBLE else 0, key=f"ei_cat_{inv_id}")
-        st.caption("**Horas de luz anuales:** sube un JSON (minutesOfDirectSunPerDay, minutesOfDirectSunPerYear). Se guarda en un archivo aparte para evitar timeouts.")
-        upload_sunlight = st.file_uploader("Archivo JSON horas de sol", type=["json"], key=f"ei_sun_{inv_id}", help="Mismo formato que annual-sunlight.json.")
         eliminar_sunlight = False
         sunlight_data = _get_sunlight_data(inv, usuario_id)
         if sunlight_data:
             total_actual = sunlight_data.get("minutesOfDirectSunPerYear") or sum(sunlight_data.get("minutesOfDirectSunPerDay", []))
-            st.caption(f"Datos actuales: **{total_actual:.0f}** min/año ({total_actual / 60:.1f} h).")
+            st.caption(f"**Horas de sol:** datos actuales **{total_actual:.0f}** min/año ({total_actual / 60:.1f} h).")
             eliminar_sunlight = st.checkbox("Eliminar datos de horas de sol", key=f"ei_del_sun_{inv_id}")
         if st.form_submit_button("Guardar cambios"):
             cert_consumo_final = _letra_desde_consumo_kwh_m2(consumo_exacto_input) if consumo_exacto_input > 0 else (certificado_consumo if certificado_consumo != "—" else "")
             cert_emisiones_final = _letra_desde_emisiones_kg_m2(emisiones_exactas_input) if emisiones_exactas_input > 0 else (certificado_emisiones if certificado_emisiones != "—" else "")
             inv_act = {**inv, "importe": importe, "valoracion": float(valoracion), "localizacion": localizacion, "ano_construccion": int(ano_construccion), "m2_construidos": m2_construidos, "m2_utiles": m2_utiles, "superficie_placas_m2": float(superficie_placas_m2), "habitaciones": int(habitaciones), "banos": int(banos), "certificado_consumo": cert_consumo_final, "certificado_emisiones": cert_emisiones_final, "consumo_exacto_kwh_m2": float(consumo_exacto_input), "emisiones_exactas_kg_m2": float(emisiones_exactas_input), "zona_climatica_cte": zona_climatica_cte if zona_climatica_cte != "—" else "", "notas": (notas or "").strip(), "piscina": piscina, "sotano": sotano, "placas_solares": placas_solares, "inmobiliaria": inmobiliaria, "comision_venta_pct": comision_venta_pct, "url_anuncio": url_anuncio.strip(), "url_inmobiliaria": url_inmobiliaria.strip(), "categoria": categoria}
-            if upload_sunlight:
-                parsed_sun = _parse_sunlight_json(upload_sunlight)
-                if parsed_sun:
-                    if ghd.guardar_sunlight_inmueble(usuario_id, inv_id, parsed_sun):
-                        inv_act["horas_luz_anual"] = True
-                    else:
-                        st.error("Error al guardar el archivo de horas de sol.")
-            elif eliminar_sunlight:
+            if eliminar_sunlight:
                 ghd.eliminar_sunlight_inmueble(usuario_id, inv_id)
                 inv_act["horas_luz_anual"] = False
-            else:
-                # Migrar legacy: si tenía el dict embebido, pasarlo a archivo para no volver a enviar payload grande
-                if isinstance(inv.get("horas_luz_anual"), dict) and inv["horas_luz_anual"].get("minutesOfDirectSunPerDay"):
-                    if ghd.guardar_sunlight_inmueble(usuario_id, inv_id, inv["horas_luz_anual"]):
-                        inv_act["horas_luz_anual"] = True
+            elif st.session_state.get("pending_sunlight_inv_id") == inv_id and st.session_state.get("pending_sunlight_data"):
+                pending = st.session_state["pending_sunlight_data"]
+                if ghd.guardar_sunlight_inmueble(usuario_id, inv_id, pending):
+                    inv_act["horas_luz_anual"] = True
+                    del st.session_state["pending_sunlight_data"]
+                    del st.session_state["pending_sunlight_inv_id"]
+            elif isinstance(inv.get("horas_luz_anual"), dict) and inv["horas_luz_anual"].get("minutesOfDirectSunPerDay"):
+                if ghd.guardar_sunlight_inmueble(usuario_id, inv_id, inv["horas_luz_anual"]):
+                    inv_act["horas_luz_anual"] = True
             if ghd.actualizar_inmueble(usuario_id, inv_act):
                 st.success("Inmueble actualizado.")
                 st.rerun()
             else:
                 st.error("Error al guardar.")
+    st.caption("**Horas de luz anuales:** sube el JSON aquí (fuera del formulario para evitar fallo de conexión). Luego pulsa **Guardar cambios** arriba.")
+    upload_sunlight = st.file_uploader("Archivo JSON horas de sol", type=["json"], key=f"ei_sun_{inv_id}", help="minutesOfDirectSunPerDay (365/366 valores).")
+    if upload_sunlight:
+        parsed_sun = _parse_sunlight_json(upload_sunlight)
+        if parsed_sun:
+            st.session_state["pending_sunlight_data"] = parsed_sun
+            st.session_state["pending_sunlight_inv_id"] = inv_id
+            st.success("Archivo cargado en memoria. Pulsa **Guardar cambios** (arriba) para subirlo al servidor.")
+        else:
+            st.warning("El JSON no tiene el formato esperado (minutesOfDirectSunPerDay con 365/366 valores).")
+    if st.session_state.get("pending_sunlight_inv_id") == inv_id and not upload_sunlight:
+        st.info("Tienes un archivo de sol pendiente. Pulsa **Guardar cambios** en el formulario de arriba.")
     if st.button("Eliminar inmueble", key=f"del_inv_{inv_id}"):
         inmuebles = [x for x in ghd.get_inmuebles(usuario_id) if x.get("id") != inv_id]
         if ghd.guardar_inmuebles(usuario_id, inmuebles):
