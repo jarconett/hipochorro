@@ -13,6 +13,7 @@ if str(_root) not in sys.path:
 import re
 from datetime import datetime
 import streamlit as st
+import streamlit.components.v1 as components
 import pandas as pd
 import requests
 from io import BytesIO
@@ -138,6 +139,8 @@ st.markdown(
     [data-testid="stTabs"] ~ [data-testid="stTabs"] { display: none !important; }
     /* Evitar que al hacer scroll se repita el bloque de login/contenido inicial (duplicado de layout) */
     .block-container ~ .block-container { display: none !important; }
+    /* Ocultar bloques que contienen el formulario de login cuando están después de las pestañas (duplicado al scroll) */
+    [data-testid="stVerticalBlock"]:has([data-testid="stForm"]) ~ [data-testid="stVerticalBlock"]:has([data-testid="stForm"]) { display: none !important; }
     </style>
     """,
     unsafe_allow_html=True,
@@ -2129,6 +2132,29 @@ def main():
         - **1.1.0** — En comparador: seguro de hogar con años de bonificación usa coste banco durante bonificación y coste externo después; hipotecas sin vinculación de seguro hogar consideran siempre el coste externo obligatorio.
         - **1.0.0** — Versión base: usuarios e hipotecas en GitHub, logos por dominio, comparador por TAE y coste primer año, cuadro de amortización sistema francés con amortización extraordinaria.
         """)
+
+    # Ocultar bloque de login duplicado que aparece al hacer scroll (script en iframe accede al DOM padre)
+    _ocultar_login_duplicado_en_scroll()
+
+
+def _ocultar_login_duplicado_en_scroll():
+    """Inyecta un script que oculta en el documento principal cualquier bloque con 'Usuario existente' que esté después de las pestañas (duplicado al hacer scroll)."""
+    html = """
+    <script>
+    (function() {
+      var doc = window.parent.document;
+      var tabs = doc.querySelector('[data-testid="stTabs"]');
+      if (!tabs) return;
+      var blocks = doc.querySelectorAll('[data-testid="stVerticalBlock"]');
+      for (var i = 0; i < blocks.length; i++) {
+        var el = blocks[i];
+        if (el.textContent.indexOf('Usuario existente') !== -1 && (tabs.compareDocumentPosition(el) & 4) === 4)
+          el.style.setProperty('display', 'none', 'important');
+      }
+    })();
+    </script>
+    """
+    components.html(html, height=0)
 
 
 if __name__ == "__main__":
