@@ -81,7 +81,8 @@
       "url_inmobiliaria": "https://www.guarderasinmobiliaria.es/ficha/pareado/albolote/el-chaparral-4/10736/26676412/es/",
       "categoria": "Interesados",
       "fecha_creacion": "2026-03-08T12:59:04.003070",
-      "id": 3
+      "id": 3,
+      "horas_luz_anual": true
     }
   ]
 }
