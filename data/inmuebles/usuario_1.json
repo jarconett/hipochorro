@@ -8,7 +8,7 @@
       "m2_utiles": 197.0,
       "superficie_placas_m2": 81.11,
       "habitaciones": 4,
-      "banos": 3,
+      "banos": 2,
       "certificado_consumo": "E",
       "certificado_emisiones": "D",
       "zona_climatica_cte": "C3",
@@ -26,7 +26,8 @@
       "emisiones_exactas_kg_m2": 34.0,
       "url_inmobiliaria": "https://www.alvarezsalmeron.com/ficha-inmueble.asp?c=25966&cod_ofer=28104676&numagencia=6542",
       "valoracion": 286000.0,
-      "horas_luz_anual": true
+      "horas_luz_anual": true,
+      "aseo": 1
     },
     {
       "importe": 295000.0,
