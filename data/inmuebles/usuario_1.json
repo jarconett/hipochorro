@@ -38,7 +38,7 @@
       "m2_utiles": 146.8,
       "superficie_placas_m2": 0.0,
       "habitaciones": 3,
-      "banos": 3,
+      "banos": 2,
       "certificado_consumo": "E",
       "certificado_emisiones": "E",
       "consumo_exacto_kwh_m2": 193.6,
@@ -55,7 +55,8 @@
       "categoria": "Interesados",
       "fecha_creacion": "2026-03-07T23:08:52.643663",
       "id": 2,
-      "horas_luz_anual": true
+      "horas_luz_anual": true,
+      "aseo": 1
     },
     {
       "importe": 299900.0,
