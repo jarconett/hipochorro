@@ -43,6 +43,31 @@ Sin `GITHUB_TOKEN` la app arranca pero no podrá guardar usuarios ni hipotecas (
 - `data/usuarios.json`: lista de usuarios (id, nombre, email).
 - `data/hipotecas/usuario_{id}.json`: hipotecas por usuario.
 - `data/logos/{entidad_slug}.png`: logos de entidades.
+- `data/inmuebles/usuario_{id}.json`: agenda de inmuebles por usuario.
+- `data/inmuebles_fotos/`: fotos de cada inmueble (subidas desde la app).
+- `data/inmuebles_sunlight/`: ficheros JSON con horas de sol anuales por inmueble.
+
+## Dependencias y código de terceros
+
+Esta app se apoya en varias librerías y servicios externos. Todo el código específico de la lógica de negocio de hipotecas e inmuebles está desarrollado para este proyecto, pero se usan:
+
+- **Streamlit** (`streamlit`): framework para la interfaz web.  
+  - Proyecto original: https://github.com/streamlit/streamlit
+- **PyGithub** (`PyGithub`): cliente de la API de GitHub para leer/escribir JSON y binarios en el propio repo.  
+  - Proyecto original: https://github.com/PyGithub/PyGithub
+- **Folium** (`folium`) + **streamlit-folium**: visualización de mapas interactivos en la ficha de cada inmueble.  
+  - Folium: https://github.com/python-visualization/folium  
+  - streamlit-folium: https://github.com/randyzwitch/streamlit-folium
+- **OSRM** (servicio público `router.project-osrm.org`): cálculo de rutas en coche y tiempos a la ciudad de destino.  
+  - Proyecto original: http://project-osrm.org/
+- **Nominatim (OpenStreetMap)**: geocodificación de direcciones (localización de inmuebles).  
+  - Política de uso: https://operations.osmfoundation.org/policies/nominatim/
+- **Apify** (`apify-client`): cliente para consumir el actor público **Idealista Property Listing Scraper** cuando se intenta obtener imágenes de anuncios de Idealista.  
+  - Cliente: https://github.com/apify/apify-client-python  
+  - Actor usado: `duncan01/idealista-property-listing-scraper` en la plataforma Apify (sujeto a sus términos de uso).
+- **BeautifulSoup4** (`beautifulsoup4`): parseo de HTML como alternativa cuando no se usa Apify para extraer URLs de imágenes.
+
+El uso de estos proyectos se realiza respetando sus licencias y términos de servicio. Esta app **no** redistribuye su código fuente; solo los consume como dependencias desde `requirements.txt`. Cualquier uso del proyecto debe tener en cuenta también las licencias y condiciones de esos proyectos externos.
 
 ## Licencia
 
