@@ -17,6 +17,7 @@ from datetime import datetime
 import streamlit as st
 import streamlit.components.v1 as components
 import pandas as pd
+import os
 import requests
 from io import BytesIO
 from urllib.parse import urljoin, urlparse
@@ -60,7 +61,7 @@ HELP_TAE = (
 APIFY_TOKEN_SECRET = "APIFY_TOKEN_SECRET"
 
 # Versión de la aplicación (visible en sidebar y changelog)
-VERSION_APP = "1.12.0"
+VERSION_APP = "1.13.0"
 
 # Gastos de compra (sobre precio de la vivienda / ITP)
 ITP_PCT = 7.0           # Impuesto de Transmisiones Patrimoniales: % sobre precio vivienda
@@ -444,35 +445,6 @@ def _extraer_id_idealista(url: str) -> str | None:
     return m.group(1) if m else None
 
 
-def _obtener_imagenes_idealista_zenrows(url_anuncio: str, property_id: str, api_key: str) -> list:
-    """Obtiene URLs de imágenes de un anuncio Idealista vía API ZenRows. Requiere ZENROWS_API_KEY."""
-    try:
-        endpoint = f"https://realestate.api.zenrows.com/v1/targets/idealista/properties/{property_id}"
-        r = requests.get(endpoint, params={"apikey": api_key, "url": url_anuncio}, headers=_REQUEST_HEADERS, timeout=15)
-        if r.status_code != 200:
-            return []
-        data = r.json()
-        # Respuesta puede ser lista de URLs o lista de objetos { "url": "..." }; también buscar en anidados
-        urls = []
-        for key in ("property_images", "images", "gallery", "multimedia", "photos", "imageUrls"):
-            val = data.get(key)
-            if isinstance(val, list):
-                urls.extend(_urls_desde_lista_imagenes(val))
-            elif isinstance(val, str) and _normalizar_url_imagen(val):
-                urls.append(val)
-        # Estructura anidada tipo data.property.multimedia
-        for nest in ("data", "property", "result"):
-            sub = data.get(nest)
-            if isinstance(sub, dict):
-                for key in ("property_images", "images", "gallery", "multimedia", "photos"):
-                    val = sub.get(key)
-                    if isinstance(val, list):
-                        urls.extend(_urls_desde_lista_imagenes(val))
-        return list(dict.fromkeys(urls))
-    except Exception:
-        return []
-
-
 def _obtener_imagenes_idealista_apify(url_anuncio: str, api_token: str) -> list:
     """Obtiene URLs de imágenes de un anuncio Idealista vía Apify (actor Idealista Property Listing Scraper). Requiere APIFY_TOKEN en secrets."""
     try:
@@ -501,22 +473,15 @@ def _obtener_imagenes_idealista_apify(url_anuncio: str, api_token: str) -> list:
 def extraer_urls_imagenes_anuncio(url_anuncio: str, max_urls: int = 50) -> list:
     """
     Extrae URLs de imágenes de una página de anuncio (Idealista y otros).
-    Para Idealista: si está configurado ZENROWS_API_KEY usa ZenRows; si no, APIFY_TOKEN usa Apify.
-    Si no hay ninguna key, intenta extraer del HTML (puede fallar con 403 en Idealista).
-    Devuelve lista de URLs para que el usuario elija cuáles añadir a la ficha.
+    Para Idealista: si está configurado APIFY_TOKEN usa Apify; si no, intenta extraer del HTML
+    (puede fallar con 403 en Idealista). Devuelve lista de URLs para que el usuario elija
+    cuáles añadir a la ficha.
     """
     if not url_anuncio or not url_anuncio.strip().startswith("http"):
         return []
     url_anuncio = url_anuncio.strip()
-    # Opción 1: Idealista + ZenRows API (evita 403)
-    import os
-    zenrows_key = os.environ.get("ZENROWS_API_KEY") or (st.secrets.get("ZENROWS_API_KEY") if hasattr(st, "secrets") else None)
+    # Opción 1: Idealista + Apify (actor por URL; configurar APIFY_TOKEN en secrets)
     property_id = _extraer_id_idealista(url_anuncio)
-    if property_id and zenrows_key:
-        urls = _obtener_imagenes_idealista_zenrows(url_anuncio, property_id, zenrows_key)
-        if urls:
-            return urls[:max_urls]
-    # Opción 2: Idealista + Apify (actor por URL; configurar APIFY_TOKEN en secrets)
     apify_token = os.environ.get(APIFY_TOKEN_SECRET) or (st.secrets.get(APIFY_TOKEN_SECRET) if hasattr(st, "secrets") else None)
     if property_id and apify_token:
         urls = _obtener_imagenes_idealista_apify(url_anuncio, apify_token)
@@ -531,7 +496,7 @@ def extraer_urls_imagenes_anuncio(url_anuncio: str, max_urls: int = 50) -> list:
         if r.status_code not in (200, 201) and (len(html) < 5000 or "idealista" not in html.lower()):
             if r.status_code == 403 and "idealista" in url_anuncio.lower():
                 raise ValueError(
-                    "Idealista ha bloqueado la petición (403). Configura APIFY_TOKEN o ZENROWS_API_KEY en secrets "
+                    "Idealista ha bloqueado la petición (403). Configura APIFY_TOKEN en secrets "
                     "(ver docs/IDEALISTA_SCRAPING.md) o añade las fotos manualmente."
                 )
             r.raise_for_status()
@@ -2042,7 +2007,7 @@ def agenda_inmuebles(usuario_id: int):
                     # Obtener fotos desde URL(s): Idealista y/o web inmobiliaria
                     if inv.get("url_anuncio") or inv.get("url_inmobiliaria"):
                         if inv.get("url_anuncio") and "idealista" in (inv.get("url_anuncio") or "").lower():
-                            st.caption("Idealista suele bloquear peticiones directas (403). Configura **APIFY_TOKEN** o **ZENROWS_API_KEY** en secrets. La **URL inmobiliaria** suele permitir extraer las imágenes con más facilidad.")
+                            st.caption("Idealista suele bloquear peticiones directas (403). Configura **APIFY_TOKEN** en secrets. La **URL inmobiliaria** suele permitir extraer las imágenes con más facilidad.")
                         if st.button("🖼 Obtener / Recargar imágenes", key=f"btn_obt_fotos_{inv_id}", help="Extrae imágenes del anuncio Idealista y/o de la URL de la inmobiliaria. Selecciona luego las que quieras añadir a la ficha."):
                             try:
                                 todas_urls = []
@@ -2170,6 +2135,88 @@ def _tab_comparador_inmuebles(usuario_id: int):
     df = pd.DataFrame(data, index=[nombre for nombre, _ in filas])
     st.dataframe(df, use_container_width=True, height=min(500, 50 + len(filas) * 35))
     st.caption("Coste total compra incluye precio + comisión (si inmobiliaria) + ITP 7% + notaría + registro + gestoría.")
+
+
+def _tab_entrada_gastos_financiacion(usuario_id: int):
+    """
+    Pestaña: calcula la entrada necesaria para un % de financiación (por defecto 90%),
+    considerando los gastos indicados por el usuario.
+    """
+    hipotecas = ghd.get_hipotecas(usuario_id)
+    if not hipotecas:
+        st.info("No hay hipotecas dadas de alta. Ve a **Alta de hipotecas** para añadir al menos una.")
+        return
+
+    inmuebles = ghd.get_inmuebles(usuario_id)
+    if not inmuebles:
+        st.info("No hay inmuebles en la agenda. Ve a **Agenda inmuebles** para dar de alta viviendas.")
+        return
+
+    st.subheader("Entrada y gastos para financiación")
+    st.caption("Selecciona una hipoteca y un inmueble de la agenda. Se calcula la entrada para un % de financiación (por defecto 90%).")
+
+    opts_hipo = [
+        f"{h.get('nombre_entidad','')} — {h.get('nombre_hipoteca','')} (TIN {h.get('tin')}%)"
+        for h in hipotecas
+    ]
+    sel_hipo = st.selectbox("Hipoteca", opts_hipo, key="entrada_sel_hipo")
+    idx_hipo = opts_hipo.index(sel_hipo) if sel_hipo in opts_hipo else 0
+    h = hipotecas[idx_hipo]
+
+    # Evitar cálculos extra (OSRM) en esta pestaña: usamos el título sin “min a destino”.
+    opts_inv_unique = [f"{_titulo_inmueble(inv)} (ID {inv.get('id')})" for inv in inmuebles]
+
+    sel_inv = st.selectbox("Inmueble (agenda)", opts_inv_unique, key="entrada_sel_inv")
+    idx_inv = opts_inv_unique.index(sel_inv) if sel_inv in opts_inv_unique else 0
+    inv = inmuebles[idx_inv]
+
+    importe = float(inv.get("importe", 0) or 0)
+    if importe <= 0:
+        st.warning("El inmueble no tiene un importe válido.")
+        return
+
+    # Comisión inmobiliaria: solo si el inmueble es de inmobiliaria
+    comision_inmobiliaria_pct = float(inv.get("comision_venta_pct", 0) or 0) if inv.get("inmobiliaria") else 0.0
+    comision_inmobiliaria = importe * comision_inmobiliaria_pct / 100.0
+
+    # Gastos (según tu lista)
+    notaria = 1000.0
+    registro = 600.0
+    gestoria = 300.0
+    itp = importe * (ITP_PCT / 100.0)
+
+    gastos_totales = notaria + registro + gestoria + comision_inmobiliaria + itp
+
+    st.markdown("---")
+    col1, col2 = st.columns(2)
+    with col1:
+        pct_financiacion = st.number_input(
+            "Porcentaje de financiación (sobre precio de compra)",
+            min_value=0.0,
+            max_value=100.0,
+            value=90.0,
+            step=1.0,
+            format="%.1f",
+            key="entrada_pct_fin_default",
+        )
+        financiado = importe * pct_financiacion / 100.0
+        entrada_compra = importe - financiado
+        st.metric("Entrada (parte compra)", f"{entrada_compra:.0f} €")
+
+    with col2:
+        total_entrada = entrada_compra + gastos_totales
+        st.metric("Total a aportar (entrada + gastos)", f"{total_entrada:.0f} €")
+        st.caption(f"Hipoteca seleccionada: {h.get('nombre_entidad','')} — {h.get('nombre_hipoteca','')}")
+
+    st.markdown("---")
+    st.caption(f"Precio compra: {importe:.0f} €")
+    st.caption(f"I.T.P (7%): {itp:.0f} €")
+    st.caption(f"Notaría: {notaria:.0f} € · Registro: {registro:.0f} € · Gestoría: {gestoria:.0f} €")
+    if comision_inmobiliaria_pct > 0:
+        st.caption(f"Comisión inmobiliaria ({comision_inmobiliaria_pct:.1f}%): {comision_inmobiliaria:.0f} €")
+    else:
+        st.caption("Comisión inmobiliaria: 0 € (particular o sin comisión)")
+    st.caption(f"Total gastos: {gastos_totales:.0f} €")
 
 
 def _tab_amortizar_o_invertir(usuario_id: int):
@@ -2704,10 +2751,11 @@ def main():
     st.sidebar.markdown("---")
     st.sidebar.caption(f"**Hipochorro** v{VERSION_APP}")
 
-    tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
+    tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs([
         "📝 Alta de hipotecas",
         "📊 Comparador",
         "🏠 Agenda inmuebles",
+        "💸 Entrada y gastos",
         "🏘️ Comparador inmuebles",
         "💰 ¿Amortizar o Invertir?",
         "ℹ️ Info",
@@ -2736,12 +2784,15 @@ def main():
         agenda_inmuebles(u["id"])
 
     with tab4:
-        _tab_comparador_inmuebles(u["id"])
+        _tab_entrada_gastos_financiacion(u["id"])
 
     with tab5:
-        _tab_amortizar_o_invertir(u["id"])
+        _tab_comparador_inmuebles(u["id"])
 
     with tab6:
+        _tab_amortizar_o_invertir(u["id"])
+
+    with tab7:
         st.markdown("""
         **Hipochorro** guarda usuarios e hipotecas en el repositorio GitHub **jarconett/hipochorro**.
         - En **Streamlit Cloud** configura el secret `GITHUB_TOKEN` con un token de acceso al repo (con permisos de escritura).
@@ -2753,8 +2804,9 @@ def main():
         st.subheader("Changelog")
         st.markdown(f"**Versión actual: {VERSION_APP}**")
         st.markdown("""
+        - **1.13.0** — Nueva pestaña «Entrada y gastos»: selecciona hipoteca e inmueble de la agenda y calcula entrada total para un % de financiación (por defecto 90%) con gastos fijos (notaría 1000 €, registro 600 €, gestoría 300 €) + ITP 7% + comisión inmobiliaria del inmueble si aplica.
         - **1.12.0** — Horas de sol (JSON): el archivo de exposición solar se guarda en un fichero aparte en GitHub (`data/inmuebles_sunlight/`) en lugar de dentro del JSON del inmueble, evitando timeouts y «Connection lost» al subir. Lectura vía `get_sunlight_inmueble`; migración automática de datos legacy embebidos al guardar la ficha. Irradiación (kWh/m²·año) y cálculo de placas con eficiencia y PR desde datos reales del inmueble.
-        - **1.11.0** — Inmuebles: superficie disponible para placas solares (m²) en alta y ficha; leyenda con nº de placas, reducción teórica y apta/no apta para subvención; indicador ⚡ en títulos (sidebar y listado). Certificado energético: valores exactos de consumo (kWh/m²·año) y emisiones (kg CO₂/m²·año) con asignación automática de letra; si no se indica valor exacto se usa el valor medio del rango. Zonas climáticas CTE en módulo y datos (import opcional). Scraper Idealista: extracción de todas las imágenes (listas de objetos y estructuras anidadas en ZenRows/Apify). Botón «Recargar imágenes desde Idealista» en cada ficha.
+        - **1.11.0** — Inmuebles: superficie disponible para placas solares (m²) en alta y ficha; leyenda con nº de placas, reducción teórica y apta/no apta para subvención; indicador ⚡ en títulos (sidebar y listado). Certificado energético: valores exactos de consumo (kWh/m²·año) y emisiones (kg CO₂/m²·año) con asignación automática de letra; si no se indica valor exacto se usa el valor medio del rango. Zonas climáticas CTE en módulo y datos (import opcional). Scraper Idealista: extracción de todas las imágenes (listas de objetos y estructuras anidadas en Apify o scraping directo). Botón «Recargar imágenes desde Idealista» en cada ficha.
         - **1.10.0** — Rediseño UI: tema profesional en `.streamlit/config.toml` (colores claro/oscuro, Plus Jakarta Sans), CSS global (espaciado, expanders tipo card, focus visible, tabular-nums en métricas).
         - **1.9.0** — Nueva pestaña «¿Amortizar o Invertir?»: selección de hipoteca, importe de amortización anual, comisiones bonificadas o estándar; comparativa con depósito/fondo (dinero invertido y % rendimiento o importe obtenido); retención por rentas del ahorro (tramos España 19–26 %); comparativa visual amortizar vs invertir.
         - **1.8.0** — Sección GPS en sidebar: ciudad de destino (por defecto Motril, Granada) para rutas por carretera; duración en minutos como criterio de ordenación en la agenda; botón «Calcular rutas a destino». Visor de mapa en cada ficha de inmueble (Folium): pin para comprobar geocodificación, clic en el mapa para recolocar el pin, botón «Guardar coordenadas» para persistir lat/lon en la ficha.
@@ -2762,7 +2814,7 @@ def main():
         - **1.6.0** — Resaltado en verde de todos los campos de bonificación (bonif., bonificado, bonificación) en alta y edición de hipotecas.
         - **1.5.0** — Resaltado en rojo de campos de comisiones y costes (comisión amortización, mantenimiento, tasación, seguros, alarma, protección pagos, pensión, comisión de apertura). Comisión de apertura e importe bonificado en la firma en formularios.
         - **1.4.0** — Gastos de compra completos: ITP 7%, notaría y registro (10% del ITP cada uno), gestoría 300 €. Desglose en sidebar con total de gastos. Inmuebles: certificado energético, habitaciones, baños, notas; título con precio/m².
-        - **1.3.0** — Agenda de inmuebles: pestaña dedicada, formulario (importe, localización, año, m², piscina, sótano, particular/inmobiliaria, comisión venta). Obtención de fotos desde URL de anuncio (Idealista vía ZenRows/Apify o scraping). Selector de inmueble en sidebar para simular hipoteca.
+        - **1.3.0** — Agenda de inmuebles: pestaña dedicada, formulario (importe, localización, año, m², piscina, sótano, particular/inmobiliaria, comisión venta). Obtención de fotos desde URL de anuncio (Idealista vía Apify o scraping). Selector de inmueble en sidebar para simular hipoteca.
         - **1.2.0** — Selector “Aplicar amortización extraordinaria para…” movido debajo del campo de amortización extraordinaria anual. Modo mixto de amortización en comparador.
         - **1.1.0** — En comparador: seguro de hogar con años de bonificación usa coste banco durante bonificación y coste externo después; hipotecas sin vinculación de seguro hogar consideran siempre el coste externo obligatorio.
         - **1.0.0** — Versión base: usuarios e hipotecas en GitHub, logos por dominio, comparador por TAE y coste primer año, cuadro de amortización sistema francés con amortización extraordinaria.
