@@ -61,10 +61,19 @@ HELP_TAE = (
 APIFY_TOKEN_SECRET = "APIFY_TOKEN_SECRET"
 
 # Versión de la aplicación (visible en sidebar y changelog)
-VERSION_APP = "1.13.0"
+VERSION_APP = "1.14.1"
 
 # Gastos de compra (sobre precio de la vivienda / ITP)
 ITP_PCT = 7.0           # Impuesto de Transmisiones Patrimoniales: % sobre precio vivienda
+
+# Estados de seguimiento de ofertas de compra (valor guardado → etiqueta UI)
+ESTADOS_OFERTA_COMPRA = [
+    ("borrador", "Borrador"),
+    ("enviada", "Enviada"),
+    ("rechazada", "Rechazada"),
+    ("aceptada", "Aceptada"),
+    ("contraoferta", "Contraoferta"),
+]
 NOTARIA_PCT_DEL_ITP = 10.0   # Notaría: % del importe del ITP
 REGISTRO_PCT_DEL_ITP = 10.0  # Registro: % del importe del ITP
 GESTORIA_EUR = 300.0    # Gestoría: importe fijo (€)
@@ -1569,6 +1578,14 @@ def _editor_inmueble(usuario_id: int, inv: dict):
     with st.form(f"form_edit_inm_{inv_id}"):
         importe = st.number_input("Importe (€)", min_value=0.0, value=float(inv.get("importe", 0) or 0), step=5000.0, key=f"ei_imp_{inv_id}")
         valoracion = st.number_input("Valoración (€)", min_value=0.0, value=float(inv.get("valoracion", 0) or 0), step=5000.0, key=f"ei_val_{inv_id}", help="Valor de mercado o tasación; se compara con el precio para mostrar si está por encima o por debajo.")
+        valor_medio_barrio = st.number_input(
+            "Valor medio viviendas del barrio (€)",
+            min_value=0.0,
+            value=float(inv.get("valor_medio_barrio", 0) or 0),
+            step=100.0,
+            key=f"ei_vmb_{inv_id}",
+            help="Referencia del precio medio en la zona (portales, datos de mercado, etc.). Opcional.",
+        )
         localizacion = st.text_input("Localización", value=inv.get("localizacion", "") or "", key=f"ei_loc_{inv_id}")
         ano_construccion = st.number_input("Año construcción", min_value=1800, max_value=2030, value=int(inv.get("ano_construccion", 0) or 0), step=1, key=f"ei_ano_{inv_id}")
         m2_construidos = st.number_input("m² construidos", min_value=0.0, value=float(inv.get("m2_construidos", 0) or 0), step=1.0, key=f"ei_m2c_{inv_id}")
@@ -1629,7 +1646,7 @@ def _editor_inmueble(usuario_id: int, inv: dict):
         if st.form_submit_button("Guardar cambios"):
             cert_consumo_final = _letra_desde_consumo_kwh_m2(consumo_exacto_input) if consumo_exacto_input > 0 else (certificado_consumo if certificado_consumo != "—" else "")
             cert_emisiones_final = _letra_desde_emisiones_kg_m2(emisiones_exactas_input) if emisiones_exactas_input > 0 else (certificado_emisiones if certificado_emisiones != "—" else "")
-            inv_act = {**inv, "importe": importe, "valoracion": float(valoracion), "localizacion": localizacion, "ano_construccion": int(ano_construccion), "m2_construidos": m2_construidos, "m2_utiles": m2_utiles, "superficie_placas_m2": float(superficie_placas_m2), "habitaciones": int(habitaciones), "banos": int(banos), "aseo": int(aseo), "certificado_consumo": cert_consumo_final, "certificado_emisiones": cert_emisiones_final, "consumo_exacto_kwh_m2": float(consumo_exacto_input), "emisiones_exactas_kg_m2": float(emisiones_exactas_input), "zona_climatica_cte": zona_climatica_cte if zona_climatica_cte != "—" else "", "notas": (notas or "").strip(), "piscina": piscina, "sotano": sotano, "placas_solares": placas_solares, "inmobiliaria": inmobiliaria, "comision_venta_pct": comision_venta_pct, "url_anuncio": url_anuncio.strip(), "url_inmobiliaria": url_inmobiliaria.strip(), "categoria": categoria}
+            inv_act = {**inv, "importe": importe, "valoracion": float(valoracion), "valor_medio_barrio": float(valor_medio_barrio), "localizacion": localizacion, "ano_construccion": int(ano_construccion), "m2_construidos": m2_construidos, "m2_utiles": m2_utiles, "superficie_placas_m2": float(superficie_placas_m2), "habitaciones": int(habitaciones), "banos": int(banos), "aseo": int(aseo), "certificado_consumo": cert_consumo_final, "certificado_emisiones": cert_emisiones_final, "consumo_exacto_kwh_m2": float(consumo_exacto_input), "emisiones_exactas_kg_m2": float(emisiones_exactas_input), "zona_climatica_cte": zona_climatica_cte if zona_climatica_cte != "—" else "", "notas": (notas or "").strip(), "piscina": piscina, "sotano": sotano, "placas_solares": placas_solares, "inmobiliaria": inmobiliaria, "comision_venta_pct": comision_venta_pct, "url_anuncio": url_anuncio.strip(), "url_inmobiliaria": url_inmobiliaria.strip(), "categoria": categoria}
             if eliminar_sunlight:
                 ghd.eliminar_sunlight_inmueble(usuario_id, inv_id)
                 inv_act["horas_luz_anual"] = False
@@ -1678,6 +1695,13 @@ def agenda_inmuebles(usuario_id: int):
     with st.form("form_inmueble"):
         importe = st.number_input("Importe de la vivienda (€) *", min_value=0.0, value=150000.0, step=5000.0)
         valoracion = st.number_input("Valoración (€)", min_value=0.0, value=0.0, step=5000.0, help="Valor de mercado o tasación (opcional); se compara con el precio en la ficha.")
+        valor_medio_barrio = st.number_input(
+            "Valor medio viviendas del barrio (€)",
+            min_value=0.0,
+            value=0.0,
+            step=100.0,
+            help="Referencia del precio medio en la zona (portales, datos de mercado). Opcional.",
+        )
         localizacion = st.text_input("Localización", placeholder="Ej: Madrid, zona Norte")
         ano_construccion = st.number_input("Año de construcción", min_value=1800, max_value=2030, value=2000, step=1)
         m2_construidos = st.number_input("m² construidos", min_value=0.0, value=90.0, step=1.0)
@@ -1721,6 +1745,7 @@ def agenda_inmuebles(usuario_id: int):
             inv = {
                 "importe": float(importe),
                 "valoracion": float(valoracion),
+                "valor_medio_barrio": float(valor_medio_barrio),
                 "localizacion": (localizacion or "").strip(),
                 "ano_construccion": int(ano_construccion),
                 "m2_construidos": float(m2_construidos),
@@ -1946,6 +1971,24 @@ def agenda_inmuebles(usuario_id: int):
                             st.markdown(f'<span style="color: #15803d; font-weight: bold;">✓ Por debajo del valor de mercado</span> — Precio {precio_eur:.0f} € &lt; valoración {valoracion_eur:.0f} € (diferencia {diff:.0f} €).', unsafe_allow_html=True)
                         else:
                             st.caption(f"Precio y valoración coinciden: **{precio_eur:.0f} €**.")
+                    vmb = float(inv.get("valor_medio_barrio", 0) or 0)
+                    if vmb > 0:
+                        precio_eur_b = float(inv.get("importe", 0) or 0)
+                        diff_barrio = precio_eur_b - vmb
+                        if diff_barrio > 0:
+                            st.markdown(
+                                f'<span style="color: #92400e;">📍 Barrio:</span> precio anuncio **{precio_eur_b:.0f} €** vs valor medio del barrio **{vmb:.0f} €** '
+                                f'(**+{diff_barrio:.0f} €** sobre la media).',
+                                unsafe_allow_html=True,
+                            )
+                        elif diff_barrio < 0:
+                            st.markdown(
+                                f'<span style="color: #0f766e;">📍 Barrio:</span> precio anuncio **{precio_eur_b:.0f} €** vs valor medio del barrio **{vmb:.0f} €** '
+                                f'(**{diff_barrio:.0f} €** respecto a la media).',
+                                unsafe_allow_html=True,
+                            )
+                        else:
+                            st.caption(f"📍 **Barrio:** el precio del anuncio coincide con el valor medio del barrio (**{vmb:.0f} €**).")
                     if inv.get("url_anuncio") or inv.get("url_inmobiliaria"):
                         enlaces = []
                         if inv.get("url_anuncio"):
@@ -2100,6 +2143,7 @@ def _tab_comparador_inmuebles(usuario_id: int):
         ("Localización", lambda inv: _valor(inv, "localizacion")),
         ("Precio (€)", lambda inv: _valor(inv, "importe", lambda x: f"{float(x):.0f}")),
         ("Valoración (€)", lambda inv: f"{float(inv.get('valoracion') or 0):.0f}" if float(inv.get("valoracion") or 0) > 0 else "—"),
+        ("Valor medio barrio (€)", lambda inv: f"{float(inv.get('valor_medio_barrio') or 0):.0f}" if float(inv.get("valor_medio_barrio") or 0) > 0 else "—"),
         ("m² construidos", lambda inv: _valor(inv, "m2_construidos", lambda x: f"{float(x):.0f}")),
         ("m² útiles", lambda inv: _valor(inv, "m2_utiles", lambda x: f"{float(x):.0f}")),
         ("€/m²", lambda inv: f"{_precio_m2_inmueble(inv):.0f}" if _precio_m2_inmueble(inv) is not None else "—"),
@@ -2137,10 +2181,38 @@ def _tab_comparador_inmuebles(usuario_id: int):
     st.caption("Coste total compra incluye precio + comisión (si inmobiliaria) + ITP 7% + notaría + registro + gestoría.")
 
 
+def _totales_entrada_gastos(
+    precio_compra: float,
+    inv: dict,
+    notaria: float,
+    registro: float,
+    gestoria: float,
+    efectivo_adicional: float,
+    pct_financiacion: float,
+) -> dict:
+    """Calcula ITP, comisión, gastos de compra, entrada y total a aportar (misma lógica que la pestaña)."""
+    comision_inmobiliaria_pct = float(inv.get("comision_venta_pct", 0) or 0) if inv.get("inmobiliaria") else 0.0
+    comision_inmobiliaria = precio_compra * comision_inmobiliaria_pct / 100.0
+    itp = precio_compra * (ITP_PCT / 100.0)
+    gastos_totales = notaria + registro + gestoria + comision_inmobiliaria + itp
+    financiado = precio_compra * pct_financiacion / 100.0
+    entrada_compra = precio_compra - financiado
+    total_a_aportar = entrada_compra + gastos_totales + efectivo_adicional
+    return {
+        "comision_inmobiliaria_pct": comision_inmobiliaria_pct,
+        "comision_inmobiliaria": comision_inmobiliaria,
+        "itp": itp,
+        "gastos_totales": gastos_totales,
+        "entrada_compra": entrada_compra,
+        "total_a_aportar": total_a_aportar,
+        "financiado": financiado,
+    }
+
+
 def _tab_entrada_gastos_financiacion(usuario_id: int):
     """
     Pestaña: calcula la entrada necesaria para un % de financiación (por defecto 90%),
-    considerando los gastos indicados por el usuario.
+    considerando los gastos indicados por el usuario. Precio editable; ofertas guardadas en GitHub.
     """
     hipotecas = ghd.get_hipotecas(usuario_id)
     if not hipotecas:
@@ -2153,7 +2225,10 @@ def _tab_entrada_gastos_financiacion(usuario_id: int):
         return
 
     st.subheader("Entrada y gastos para financiación")
-    st.caption("Selecciona una hipoteca y un inmueble de la agenda. Se calcula la entrada para un % de financiación (por defecto 90%).")
+    st.caption(
+        "Selecciona hipoteca e inmueble. El **precio de compra** sale por defecto de la ficha; "
+        "cámbialo para simular otras ofertas. Puedes **guardar** cada escenario con su **estado** de seguimiento."
+    )
 
     opts_hipo = [
         f"{h.get('nombre_entidad','')} — {h.get('nombre_hipoteca','')} (TIN {h.get('tin')}%)"
@@ -2162,24 +2237,53 @@ def _tab_entrada_gastos_financiacion(usuario_id: int):
     sel_hipo = st.selectbox("Hipoteca", opts_hipo, key="entrada_sel_hipo")
     idx_hipo = opts_hipo.index(sel_hipo) if sel_hipo in opts_hipo else 0
     h = hipotecas[idx_hipo]
+    hipoteca_id = int(h.get("id", 0) or 0)
 
-    # Evitar cálculos extra (OSRM) en esta pestaña: usamos el título sin “min a destino”.
     opts_inv_unique = [f"{_titulo_inmueble(inv)} (ID {inv.get('id')})" for inv in inmuebles]
-
     sel_inv = st.selectbox("Inmueble (agenda)", opts_inv_unique, key="entrada_sel_inv")
     idx_inv = opts_inv_unique.index(sel_inv) if sel_inv in opts_inv_unique else 0
     inv = inmuebles[idx_inv]
+    inv_id = int(inv.get("id") or 0)
 
-    importe = float(inv.get("importe", 0) or 0)
-    if importe <= 0:
-        st.warning("El inmueble no tiene un importe válido.")
-        return
+    # Claves por inmueble (al cambiar de vivienda no se mezclan simulaciones)
+    k_precio = f"entrada_precio_{inv_id}"
+    k_not = f"entrada_notaria_{inv_id}"
+    k_reg = f"entrada_registro_{inv_id}"
+    k_ges = f"entrada_gestoria_{inv_id}"
+    k_ef = f"entrada_efectivo_{inv_id}"
+    k_pct = f"entrada_pct_fin_{inv_id}"
+    k_edit = f"entrada_oferta_edit_id_{inv_id}"
 
-    # Comisión inmobiliaria: solo si el inmueble es de inmobiliaria
+    precio_ficha = float(inv.get("importe", 0) or 0)
+    if k_precio not in st.session_state:
+        st.session_state[k_precio] = max(precio_ficha, 0.0)
+    if k_not not in st.session_state:
+        st.session_state[k_not] = 1000.0
+    if k_reg not in st.session_state:
+        st.session_state[k_reg] = 600.0
+    if k_ges not in st.session_state:
+        st.session_state[k_ges] = 300.0
+    if k_ef not in st.session_state:
+        st.session_state[k_ef] = 0.0
+    if k_pct not in st.session_state:
+        st.session_state[k_pct] = 90.0
+    if k_edit not in st.session_state:
+        st.session_state[k_edit] = None
+
+    st.markdown("**Precio de compra** (por defecto el de la ficha; edítalo para otra oferta o contraoferta)")
+    precio_compra = float(
+        st.number_input(
+            "Precio de compra (€)",
+            min_value=0.0,
+            step=5000.0,
+            key=k_precio,
+            help="Parte del precio publicado en la ficha; modifícalo para comparar ofertas o una contraoferta.",
+        )
+    )
+
     comision_inmobiliaria_pct = float(inv.get("comision_venta_pct", 0) or 0) if inv.get("inmobiliaria") else 0.0
-    comision_inmobiliaria = importe * comision_inmobiliaria_pct / 100.0
+    comision_inmobiliaria = precio_compra * comision_inmobiliaria_pct / 100.0
 
-    # Gastos: valores por defecto editables
     st.markdown("**Gastos estimados (€)**")
     gc1, gc2, gc3 = st.columns(3)
     with gc1:
@@ -2187,9 +2291,8 @@ def _tab_entrada_gastos_financiacion(usuario_id: int):
             st.number_input(
                 "Notaría",
                 min_value=0.0,
-                value=1000.0,
                 step=50.0,
-                key="entrada_notaria",
+                key=k_not,
             )
         )
     with gc2:
@@ -2197,9 +2300,8 @@ def _tab_entrada_gastos_financiacion(usuario_id: int):
             st.number_input(
                 "Registro",
                 min_value=0.0,
-                value=600.0,
                 step=50.0,
-                key="entrada_registro",
+                key=k_reg,
             )
         )
     with gc3:
@@ -2207,52 +2309,63 @@ def _tab_entrada_gastos_financiacion(usuario_id: int):
             st.number_input(
                 "Gestoría",
                 min_value=0.0,
-                value=300.0,
                 step=50.0,
-                key="entrada_gestoria",
+                key=k_ges,
             )
         )
     efectivo_adicional = float(
         st.number_input(
             "Dinero adicional en efectivo (€)",
             min_value=0.0,
-            value=0.0,
             step=100.0,
-            key="entrada_efectivo_adicional",
-            help="Otros desembolsos en efectivo que quieras sumar al total (mobiliario, reforma, reserva, etc.). No forma parte de los gastos de compra anteriores.",
+            key=k_ef,
+            help="Otros desembolsos en efectivo que quieras sumar al total (mobiliario, reforma, reserva, etc.).",
         )
     )
-    itp = importe * (ITP_PCT / 100.0)
 
-    gastos_totales = notaria + registro + gestoria + comision_inmobiliaria + itp
+    pct_financiacion = float(
+        st.number_input(
+            "Porcentaje de financiación (sobre precio de compra)",
+            min_value=0.0,
+            max_value=100.0,
+            step=1.0,
+            format="%.1f",
+            key=k_pct,
+        )
+    )
+
+    tot = _totales_entrada_gastos(
+        precio_compra,
+        inv,
+        notaria,
+        registro,
+        gestoria,
+        efectivo_adicional,
+        pct_financiacion,
+    )
+    itp = tot["itp"]
+    gastos_totales = tot["gastos_totales"]
+    entrada_compra = tot["entrada_compra"]
+    total_entrada = tot["total_a_aportar"]
 
     st.markdown("---")
     col1, col2 = st.columns(2)
     with col1:
-        pct_financiacion = st.number_input(
-            "Porcentaje de financiación (sobre precio de compra)",
-            min_value=0.0,
-            max_value=100.0,
-            value=90.0,
-            step=1.0,
-            format="%.1f",
-            key="entrada_pct_fin_default",
-        )
-        financiado = importe * pct_financiacion / 100.0
-        entrada_compra = importe - financiado
         st.metric("Entrada (parte compra)", f"{entrada_compra:.0f} €")
-
     with col2:
-        total_entrada = entrada_compra + gastos_totales + efectivo_adicional
         st.metric(
             "Total a aportar (entrada + gastos + efectivo adicional)",
             f"{total_entrada:.0f} €",
         )
-        st.caption(f"Hipoteca seleccionada: {h.get('nombre_entidad','')} — {h.get('nombre_hipoteca','')}")
+        st.caption(f"Hipoteca: {h.get('nombre_entidad','')} — {h.get('nombre_hipoteca','')}")
+
+    if precio_compra <= 0:
+        st.warning("Indica un **precio de compra** mayor que 0 para que los totales tengan sentido.")
 
     st.markdown("---")
-    st.caption(f"Precio compra: {importe:.0f} €")
-    st.caption(f"I.T.P (7%): {itp:.0f} €")
+    st.caption(f"Precio en ficha del inmueble: {precio_ficha:.0f} € (referencia)")
+    st.caption(f"Precio simulado: {precio_compra:.0f} €")
+    st.caption(f"I.T.P ({ITP_PCT}%): {itp:.0f} €")
     st.caption(f"Notaría: {notaria:.0f} € · Registro: {registro:.0f} € · Gestoría: {gestoria:.0f} €")
     if comision_inmobiliaria_pct > 0:
         st.caption(f"Comisión inmobiliaria ({comision_inmobiliaria_pct:.1f}%): {comision_inmobiliaria:.0f} €")
@@ -2263,6 +2376,157 @@ def _tab_entrada_gastos_financiacion(usuario_id: int):
         f"Dinero adicional en efectivo: {efectivo_adicional:.0f} € "
         "(sumado al total de arriba; no entra en «gastos de compra»)."
     )
+
+    # --- Ofertas guardadas y seguimiento ---
+    st.markdown("---")
+    with st.expander("📋 Ofertas de compra y seguimiento", expanded=True):
+        st.caption(
+            "Guarda escenarios con nombre y estado. **Contraoferta:** cambia el precio arriba y guarda de nuevo "
+            "(nueva fila o actualiza la cargada). Los datos se guardan en GitHub con tu usuario."
+        )
+        ofertas_todas = ghd.get_ofertas_compra(usuario_id)
+        ofertas_inv = [o for o in ofertas_todas if int(o.get("inmueble_id") or 0) == inv_id]
+        ofertas_inv.sort(key=lambda x: x.get("fecha_actualizado") or x.get("fecha_creado") or "", reverse=True)
+
+        lbl_estado = {k: v for k, v in ESTADOS_OFERTA_COMPRA}
+        estado_vals = [x[0] for x in ESTADOS_OFERTA_COMPRA]
+        estado_labels = [x[1] for x in ESTADOS_OFERTA_COMPRA]
+
+        if ofertas_inv:
+            rows = []
+            for o in ofertas_inv:
+                rows.append(
+                    {
+                        "id": o.get("id"),
+                        "Nombre": o.get("nombre", ""),
+                        "Estado": lbl_estado.get(o.get("estado"), o.get("estado", "")),
+                        "Precio (€)": o.get("precio_compra", 0),
+                        "Total a aportar (€)": round(float(o.get("total_a_aportar") or 0), 0),
+                        "Actualizado": (o.get("fecha_actualizado") or "")[:16],
+                    }
+                )
+            st.dataframe(pd.DataFrame(rows), hide_index=True, use_container_width=True)
+
+        sel_labels = ["— Cargar una oferta… —"]
+        oferta_por_label = {}
+        for o in ofertas_inv:
+            oid = o.get("id")
+            lab = f"#{oid} — {o.get('nombre', 'Sin nombre')} — {lbl_estado.get(o.get('estado'), o.get('estado'))} — {float(o.get('total_a_aportar') or 0):.0f} €"
+            sel_labels.append(lab)
+            oferta_por_label[lab] = o
+
+        pick = st.selectbox("Seleccionar oferta guardada (este inmueble)", sel_labels, key=f"entrada_pick_oferta_{inv_id}")
+        b1, b2, b3 = st.columns(3)
+        with b1:
+            cargar = st.button("Cargar en la simulación", key=f"entrada_btn_cargar_{inv_id}")
+        with b2:
+            borrar = st.button("Eliminar oferta seleccionada", key=f"entrada_btn_borrar_{inv_id}")
+        with b3:
+            if st.session_state.get(k_edit):
+                st.caption(f"Editando oferta **#{st.session_state[k_edit]}** (puedes **Actualizar** abajo).")
+            else:
+                st.caption("Tras cargar, puedes editar y **Actualizar** esa misma oferta.")
+
+        if cargar and pick in oferta_por_label:
+            oc = oferta_por_label[pick]
+            st.session_state[k_precio] = float(oc.get("precio_compra") or 0)
+            st.session_state[k_not] = float(oc.get("notaria", 1000) or 1000)
+            st.session_state[k_reg] = float(oc.get("registro", 600) or 600)
+            st.session_state[k_ges] = float(oc.get("gestoria", 300) or 300)
+            st.session_state[k_ef] = float(oc.get("efectivo_adicional", 0) or 0)
+            st.session_state[k_pct] = float(oc.get("pct_financiacion", 90) or 90)
+            st.session_state[k_edit] = int(oc.get("id") or 0)
+            st.session_state[f"entrada_nombre_oferta_{inv_id}"] = oc.get("nombre") or ""
+            st.session_state[f"entrada_notas_oferta_{inv_id}"] = oc.get("notas") or ""
+            es = oc.get("estado") or "borrador"
+            st.session_state[f"entrada_estado_oferta_{inv_id}"] = (
+                estado_vals.index(es) if es in estado_vals else 0
+            )
+            st.rerun()
+
+        if borrar and pick in oferta_por_label:
+            oid_del = int(oferta_por_label[pick].get("id") or 0)
+            if oid_del and ghd.eliminar_oferta_compra(usuario_id, oid_del):
+                st.session_state.pop(k_edit, None)
+                st.success("Oferta eliminada.")
+                st.rerun()
+            else:
+                st.error("No se pudo eliminar (¿token GitHub?).")
+
+        nombre_of = st.text_input(
+            "Nombre de la oferta",
+            placeholder="Ej. Primera oferta, Contraoferta vendedor…",
+            key=f"entrada_nombre_oferta_{inv_id}",
+        )
+        ix_est = st.selectbox(
+            "Estado de seguimiento",
+            list(range(len(estado_labels))),
+            format_func=lambda i: estado_labels[i],
+            key=f"entrada_estado_oferta_{inv_id}",
+        )
+        estado_sel = estado_vals[ix_est]
+        notas_of = st.text_area("Notas (opcional)", key=f"entrada_notas_oferta_{inv_id}", height=68)
+
+        def _payload_oferta() -> dict:
+            t2 = _totales_entrada_gastos(
+                precio_compra, inv, notaria, registro, gestoria, efectivo_adicional, pct_financiacion
+            )
+            now = datetime.now().isoformat(timespec="seconds")
+            return {
+                "inmueble_id": inv_id,
+                "hipoteca_id": hipoteca_id,
+                "nombre": (nombre_of or "").strip() or f"Oferta {now[:10]}",
+                "precio_compra": precio_compra,
+                "notaria": notaria,
+                "registro": registro,
+                "gestoria": gestoria,
+                "efectivo_adicional": efectivo_adicional,
+                "pct_financiacion": pct_financiacion,
+                "estado": estado_sel,
+                "notas": (notas_of or "").strip(),
+                "itp": t2["itp"],
+                "comision_inmobiliaria_pct": t2["comision_inmobiliaria_pct"],
+                "comision_inmobiliaria": t2["comision_inmobiliaria"],
+                "gastos_totales_compra": t2["gastos_totales"],
+                "entrada_compra": t2["entrada_compra"],
+                "total_a_aportar": t2["total_a_aportar"],
+                "fecha_actualizado": now,
+            }
+
+        g1, g2 = st.columns(2)
+        with g1:
+            if st.button("Guardar como nueva oferta", key=f"entrada_guardar_nueva_{inv_id}"):
+                pl = _payload_oferta()
+                pl["fecha_creado"] = pl["fecha_actualizado"]
+                r = ghd.añadir_oferta_compra(usuario_id, pl)
+                if r:
+                    st.session_state[k_edit] = int(r.get("id") or 0)
+                    st.success(f"Guardada oferta #{r.get('id')}.")
+                    st.rerun()
+                else:
+                    st.error("No se pudo guardar (¿GITHUB_TOKEN configurado?).")
+        with g2:
+            edit_id = st.session_state.get(k_edit)
+            if st.button(
+                "Actualizar oferta cargada",
+                key=f"entrada_guardar_actualizar_{inv_id}",
+                disabled=not bool(edit_id),
+            ):
+                if not edit_id:
+                    st.warning("Primero **Cargar** una oferta o guarda una nueva.")
+                else:
+                    pl = _payload_oferta()
+                    pl["id"] = int(edit_id)
+                    oc0 = next((x for x in ofertas_todas if x.get("id") == edit_id), None)
+                    if oc0 and oc0.get("fecha_creado"):
+                        pl["fecha_creado"] = oc0["fecha_creado"]
+                    else:
+                        pl["fecha_creado"] = pl["fecha_actualizado"]
+                    if ghd.actualizar_oferta_compra(usuario_id, pl):
+                        st.success(f"Oferta #{edit_id} actualizada.")
+                        st.rerun()
+                    else:
+                        st.error("No se pudo actualizar.")
 
 
 def _tab_amortizar_o_invertir(usuario_id: int):
@@ -2850,6 +3114,8 @@ def main():
         st.subheader("Changelog")
         st.markdown(f"**Versión actual: {VERSION_APP}**")
         st.markdown("""
+        - **1.14.1** — Ficha de inmueble: campo **valor medio viviendas del barrio** (€), opcional; en la ficha se compara con el precio del anuncio. Incluido en el comparador de inmuebles.
+        - **1.14.0** — «Entrada y gastos»: precio de compra tomado de la ficha y **editable** para comparar ofertas o contraofertas; **ofertas guardadas** en GitHub (`data/ofertas_compra/`) con nombre, notas, totales y estados de seguimiento (Borrador, Enviada, Rechazada, Aceptada, Contraoferta); cargar / actualizar / eliminar por inmueble.
         - **1.13.0** — Nueva pestaña «Entrada y gastos»: selecciona hipoteca e inmueble de la agenda y calcula entrada total para un % de financiación (por defecto 90%) con gastos fijos (notaría 1000 €, registro 600 €, gestoría 300 €) + ITP 7% + comisión inmobiliaria del inmueble si aplica.
         - **1.12.0** — Horas de sol (JSON): el archivo de exposición solar se guarda en un fichero aparte en GitHub (`data/inmuebles_sunlight/`) en lugar de dentro del JSON del inmueble, evitando timeouts y «Connection lost» al subir. Lectura vía `get_sunlight_inmueble`; migración automática de datos legacy embebidos al guardar la ficha. Irradiación (kWh/m²·año) y cálculo de placas con eficiencia y PR desde datos reales del inmueble.
         - **1.11.0** — Inmuebles: superficie disponible para placas solares (m²) en alta y ficha; leyenda con nº de placas, reducción teórica y apta/no apta para subvención; indicador ⚡ en títulos (sidebar y listado). Certificado energético: valores exactos de consumo (kWh/m²·año) y emisiones (kg CO₂/m²·año) con asignación automática de letra; si no se indica valor exacto se usa el valor medio del rango. Zonas climáticas CTE en módulo y datos (import opcional). Scraper Idealista: extracción de todas las imágenes (listas de objetos y estructuras anidadas en Apify o scraping directo). Botón «Recargar imágenes desde Idealista» en cada ficha.

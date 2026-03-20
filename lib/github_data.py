@@ -37,6 +37,7 @@ HIPOTECAS_DIR = f"{DATA_DIR}/hipotecas"
 INMUEBLES_DIR = f"{DATA_DIR}/inmuebles"
 INMUEBLES_FOTOS_DIR = f"{DATA_DIR}/inmuebles_fotos"
 INMUEBLES_SUNLIGHT_DIR = f"{DATA_DIR}/inmuebles_sunlight"
+OFERTAS_COMPRA_DIR = f"{DATA_DIR}/ofertas_compra"
 LOGOS_DIR = f"{DATA_DIR}/logos"
 
 def _slug(texto: str) -> str:
@@ -338,3 +339,68 @@ def eliminar_sunlight_inmueble(usuario_id: int, inmueble_id: int) -> bool:
         return True
     except Exception:
         return False
+
+
+# --- Ofertas de compra (entrada + gastos, seguimiento) ---
+
+def _path_ofertas_compra(usuario_id: int) -> str:
+    return f"{OFERTAS_COMPRA_DIR}/usuario_{usuario_id}.json"
+
+
+def get_ofertas_compra(usuario_id: int) -> list:
+    """Lee ofertas de compra guardadas del usuario (simulaciones con precio/gastos y estado)."""
+    repo = _repo()
+    if not repo:
+        return []
+    path = _path_ofertas_compra(usuario_id)
+    try:
+        c = repo.get_contents(path)
+        data = json.loads(base64.b64decode(c.content).decode())
+        return data.get("ofertas", [])
+    except Exception:
+        return []
+
+
+def guardar_ofertas_compra(usuario_id: int, ofertas: list) -> bool:
+    """Persiste la lista completa de ofertas de compra."""
+    repo = _repo()
+    if not repo:
+        return False
+    path = _path_ofertas_compra(usuario_id)
+    contenido = json.dumps({"ofertas": ofertas}, indent=2, ensure_ascii=False)
+    try:
+        c = repo.get_contents(path)
+        repo.update_file(path, "Actualizar ofertas de compra", contenido, c.sha)
+    except Exception:
+        try:
+            repo.create_file(path, "Crear ofertas de compra usuario", contenido)
+        except Exception:
+            return False
+    return True
+
+
+def añadir_oferta_compra(usuario_id: int, oferta: dict) -> Optional[dict]:
+    """Añade una oferta con id autogenerado."""
+    ofertas = get_ofertas_compra(usuario_id)
+    oid = max([o.get("id", 0) for o in ofertas], default=0) + 1
+    oferta["id"] = oid
+    ofertas.append(oferta)
+    if guardar_ofertas_compra(usuario_id, ofertas):
+        return oferta
+    return None
+
+
+def actualizar_oferta_compra(usuario_id: int, oferta: dict) -> bool:
+    """Actualiza una oferta existente por id."""
+    ofertas = get_ofertas_compra(usuario_id)
+    for i, o in enumerate(ofertas):
+        if o.get("id") == oferta.get("id"):
+            ofertas[i] = oferta
+            return guardar_ofertas_compra(usuario_id, ofertas)
+    return False
+
+
+def eliminar_oferta_compra(usuario_id: int, oferta_id: int) -> bool:
+    """Elimina una oferta por id."""
+    ofertas = [o for o in get_ofertas_compra(usuario_id) if o.get("id") != oferta_id]
+    return guardar_ofertas_compra(usuario_id, ofertas)
