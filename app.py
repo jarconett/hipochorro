@@ -2527,33 +2527,57 @@ def _tab_entrada_gastos_financiacion(usuario_id: int):
     else:
         st.info("Aún no hay ofertas guardadas para este inmueble. Rellena nombre/estado y pulsa **Guardar oferta**.")
 
-    sel_labels = ["— Cargar una oferta… —"]
-    oferta_por_label = {}
-    for o in ofertas_inv:
-        oid = o.get("id")
-        lab = f"#{oid} — {o.get('nombre', 'Sin nombre')} — {lbl_estado.get(o.get('estado'), o.get('estado'))} — {float(o.get('total_a_aportar') or 0):.0f} €"
-        sel_labels.append(lab)
-        oferta_por_label[lab] = o
+    # Selectbox por índice (entero estable). Con etiquetas largas como valor, un rerun que cambiaba
+    # el texto invalidaba la selección y Streamlit volvía al placeholder → «Cargar» no encontraba oferta.
+    pick_ix = -1
+    if ofertas_inv:
+        opciones_pick = [-1] + list(range(len(ofertas_inv)))
 
-    pick = st.selectbox("Seleccionar oferta guardada (este inmueble)", sel_labels, key=f"entrada_pick_oferta_{inv_id}")
+        def _fmt_oferta_pick(i: int) -> str:
+            if i == -1:
+                return "— Elige una oferta… —"
+            o = ofertas_inv[i]
+            return (
+                f"#{o.get('id')} — {o.get('nombre', 'Sin nombre')} — "
+                f"{lbl_estado.get(o.get('estado'), o.get('estado'))} — "
+                f"{float(o.get('total_a_aportar') or 0):.0f} €"
+            )
+
+        pick_ix = int(
+            st.selectbox(
+                "Seleccionar oferta guardada (este inmueble)",
+                opciones_pick,
+                format_func=_fmt_oferta_pick,
+                key=f"entrada_pick_idx_{inv_id}",
+            )
+        )
+
     b1, b2 = st.columns(2)
     with b1:
         cargar = st.button("Cargar en la simulación", key=f"entrada_btn_cargar_{inv_id}")
     with b2:
         borrar = st.button("Eliminar oferta seleccionada", key=f"entrada_btn_borrar_{inv_id}")
 
-    if cargar and pick in oferta_por_label:
-        st.session_state[f"_entrada_aplicar_oferta_{inv_id}"] = dict(oferta_por_label[pick])
-        st.rerun()
-
-    if borrar and pick in oferta_por_label:
-        oid_del = int(oferta_por_label[pick].get("id") or 0)
-        if oid_del and ghd.eliminar_oferta_compra(usuario_id, oid_del):
-            st.session_state.pop(k_edit, None)
-            st.success("Oferta eliminada.")
-            st.rerun()
+    if cargar:
+        if pick_ix < 0:
+            st.warning("Selecciona una oferta en el desplegable (no solo la línea «Elige una oferta…»).")
         else:
-            st.error("No se pudo eliminar (¿token GitHub?).")
+            oc = ofertas_inv[pick_ix]
+            st.session_state[f"_entrada_aplicar_oferta_{inv_id}"] = dict(oc)
+            st.rerun()
+
+    if borrar:
+        if pick_ix < 0:
+            st.warning("Selecciona una oferta para eliminar.")
+        else:
+            oc = ofertas_inv[pick_ix]
+            oid_del = int(oc.get("id") or 0)
+            if oid_del and ghd.eliminar_oferta_compra(usuario_id, oid_del):
+                st.session_state.pop(k_edit, None)
+                st.success("Oferta eliminada.")
+                st.rerun()
+            else:
+                st.error("No se pudo eliminar (¿token GitHub?).")
 
 
 def _tab_amortizar_o_invertir(usuario_id: int):
