@@ -2255,6 +2255,31 @@ def _tab_entrada_gastos_financiacion(usuario_id: int):
     k_edit = f"entrada_oferta_edit_id_{inv_id}"
 
     precio_ficha = float(inv.get("importe", 0) or 0)
+
+    # Cargar oferta: el payload llega en el rerun siguiente. Hay que borrar las claves que ya usaron
+    # widgets en un run anterior; si no, Streamlit bloquea asignar a esas keys (StreamlitAPIException).
+    pend_oferta = st.session_state.pop(f"_entrada_aplicar_oferta_{inv_id}", None)
+    k_nombre = f"entrada_nombre_oferta_{inv_id}"
+    k_notas = f"entrada_notas_oferta_{inv_id}"
+    k_estado = f"entrada_estado_oferta_{inv_id}"
+    _keys_oferta_widgets = (k_precio, k_not, k_reg, k_ges, k_ef, k_pct, k_nombre, k_notas, k_estado, k_edit)
+
+    if pend_oferta is not None:
+        for _wk in _keys_oferta_widgets:
+            st.session_state.pop(_wk, None)
+        st.session_state[k_precio] = float(pend_oferta.get("precio_compra") or 0)
+        st.session_state[k_not] = float(pend_oferta.get("notaria", 1000) or 1000)
+        st.session_state[k_reg] = float(pend_oferta.get("registro", 600) or 600)
+        st.session_state[k_ges] = float(pend_oferta.get("gestoria", 300) or 300)
+        st.session_state[k_ef] = float(pend_oferta.get("efectivo_adicional", 0) or 0)
+        st.session_state[k_pct] = float(pend_oferta.get("pct_financiacion", 90) or 90)
+        st.session_state[k_edit] = int(pend_oferta.get("id") or 0)
+        st.session_state[k_nombre] = pend_oferta.get("nombre") or ""
+        st.session_state[k_notas] = pend_oferta.get("notas") or ""
+        es = pend_oferta.get("estado") or "borrador"
+        _ev = [x[0] for x in ESTADOS_OFERTA_COMPRA]
+        st.session_state[k_estado] = _ev.index(es) if es in _ev else 0
+
     if k_precio not in st.session_state:
         st.session_state[k_precio] = max(precio_ficha, 0.0)
     if k_not not in st.session_state:
@@ -2518,20 +2543,7 @@ def _tab_entrada_gastos_financiacion(usuario_id: int):
         borrar = st.button("Eliminar oferta seleccionada", key=f"entrada_btn_borrar_{inv_id}")
 
     if cargar and pick in oferta_por_label:
-        oc = oferta_por_label[pick]
-        st.session_state[k_precio] = float(oc.get("precio_compra") or 0)
-        st.session_state[k_not] = float(oc.get("notaria", 1000) or 1000)
-        st.session_state[k_reg] = float(oc.get("registro", 600) or 600)
-        st.session_state[k_ges] = float(oc.get("gestoria", 300) or 300)
-        st.session_state[k_ef] = float(oc.get("efectivo_adicional", 0) or 0)
-        st.session_state[k_pct] = float(oc.get("pct_financiacion", 90) or 90)
-        st.session_state[k_edit] = int(oc.get("id") or 0)
-        st.session_state[f"entrada_nombre_oferta_{inv_id}"] = oc.get("nombre") or ""
-        st.session_state[f"entrada_notas_oferta_{inv_id}"] = oc.get("notas") or ""
-        es = oc.get("estado") or "borrador"
-        st.session_state[f"entrada_estado_oferta_{inv_id}"] = (
-            estado_vals.index(es) if es in estado_vals else 0
-        )
+        st.session_state[f"_entrada_aplicar_oferta_{inv_id}"] = dict(oferta_por_label[pick])
         st.rerun()
 
     if borrar and pick in oferta_por_label:
