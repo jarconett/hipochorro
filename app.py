@@ -2377,156 +2377,171 @@ def _tab_entrada_gastos_financiacion(usuario_id: int):
         "(sumado al total de arriba; no entra en «gastos de compra»)."
     )
 
-    # --- Ofertas guardadas y seguimiento ---
+    # --- Ofertas guardadas y seguimiento (sin expander: los botones de guardar deben verse siempre)
     st.markdown("---")
-    with st.expander("📋 Ofertas de compra y seguimiento", expanded=True):
-        st.caption(
-            "Guarda escenarios con nombre y estado. **Contraoferta:** cambia el precio arriba y guarda de nuevo "
-            "(nueva fila o actualiza la cargada). Los datos se guardan en GitHub con tu usuario."
+    st.subheader("📋 Ofertas de compra y seguimiento")
+    st.caption(
+        "Pon nombre y estado y pulsa **Guardar oferta**. **Contraoferta:** cambia el precio arriba y guarda de nuevo "
+        "o usa **Actualizar** si cargaste una oferta. Requiere `GITHUB_TOKEN` para persistir en el repo."
+    )
+    ofertas_todas = ghd.get_ofertas_compra(usuario_id)
+    ofertas_inv = [o for o in ofertas_todas if int(o.get("inmueble_id") or 0) == inv_id]
+    ofertas_inv.sort(key=lambda x: x.get("fecha_actualizado") or x.get("fecha_creado") or "", reverse=True)
+
+    lbl_estado = {k: v for k, v in ESTADOS_OFERTA_COMPRA}
+    estado_vals = [x[0] for x in ESTADOS_OFERTA_COMPRA]
+    estado_labels = [x[1] for x in ESTADOS_OFERTA_COMPRA]
+
+    nombre_of = st.text_input(
+        "Nombre de la oferta",
+        placeholder="Ej. Primera oferta, Contraoferta vendedor…",
+        key=f"entrada_nombre_oferta_{inv_id}",
+    )
+    ix_est = st.selectbox(
+        "Estado de seguimiento",
+        list(range(len(estado_labels))),
+        format_func=lambda i: estado_labels[i],
+        key=f"entrada_estado_oferta_{inv_id}",
+    )
+    estado_sel = estado_vals[ix_est]
+    notas_of = st.text_area("Notas (opcional)", key=f"entrada_notas_oferta_{inv_id}", height=68)
+
+    def _payload_oferta() -> dict:
+        t2 = _totales_entrada_gastos(
+            precio_compra, inv, notaria, registro, gestoria, efectivo_adicional, pct_financiacion
         )
-        ofertas_todas = ghd.get_ofertas_compra(usuario_id)
-        ofertas_inv = [o for o in ofertas_todas if int(o.get("inmueble_id") or 0) == inv_id]
-        ofertas_inv.sort(key=lambda x: x.get("fecha_actualizado") or x.get("fecha_creado") or "", reverse=True)
+        now = datetime.now().isoformat(timespec="seconds")
+        return {
+            "inmueble_id": inv_id,
+            "hipoteca_id": hipoteca_id,
+            "nombre": (nombre_of or "").strip() or f"Oferta {now[:10]}",
+            "precio_compra": precio_compra,
+            "notaria": notaria,
+            "registro": registro,
+            "gestoria": gestoria,
+            "efectivo_adicional": efectivo_adicional,
+            "pct_financiacion": pct_financiacion,
+            "estado": estado_sel,
+            "notas": (notas_of or "").strip(),
+            "itp": t2["itp"],
+            "comision_inmobiliaria_pct": t2["comision_inmobiliaria_pct"],
+            "comision_inmobiliaria": t2["comision_inmobiliaria"],
+            "gastos_totales_compra": t2["gastos_totales"],
+            "entrada_compra": t2["entrada_compra"],
+            "total_a_aportar": t2["total_a_aportar"],
+            "fecha_actualizado": now,
+        }
 
-        lbl_estado = {k: v for k, v in ESTADOS_OFERTA_COMPRA}
-        estado_vals = [x[0] for x in ESTADOS_OFERTA_COMPRA]
-        estado_labels = [x[1] for x in ESTADOS_OFERTA_COMPRA]
+    st.markdown("**Guardar**")
+    gsave1, gsave2 = st.columns(2)
+    with gsave1:
+        btn_guardar = st.button(
+            "💾 Guardar oferta",
+            key=f"entrada_guardar_nueva_{inv_id}",
+            help="Crea un nuevo registro en GitHub con la simulación actual (nombre y estado de arriba).",
+        )
+    with gsave2:
+        edit_id_btn = st.session_state.get(k_edit)
+        btn_actualizar = st.button(
+            "Actualizar oferta cargada",
+            key=f"entrada_guardar_actualizar_{inv_id}",
+            disabled=not bool(edit_id_btn),
+            help="Sustituye la oferta que cargaste con «Cargar en la simulación».",
+        )
+    if st.session_state.get(k_edit):
+        st.caption(f"Editando oferta **#{st.session_state[k_edit]}** — puedes pulsar **Actualizar oferta cargada**.")
+    else:
+        st.caption("Para actualizar una existente, primero **Cargar** una oferta de la lista de abajo.")
 
-        if ofertas_inv:
-            rows = []
-            for o in ofertas_inv:
-                rows.append(
-                    {
-                        "id": o.get("id"),
-                        "Nombre": o.get("nombre", ""),
-                        "Estado": lbl_estado.get(o.get("estado"), o.get("estado", "")),
-                        "Precio (€)": o.get("precio_compra", 0),
-                        "Total a aportar (€)": round(float(o.get("total_a_aportar") or 0), 0),
-                        "Actualizado": (o.get("fecha_actualizado") or "")[:16],
-                    }
-                )
-            st.dataframe(pd.DataFrame(rows), hide_index=True, use_container_width=True)
-
-        sel_labels = ["— Cargar una oferta… —"]
-        oferta_por_label = {}
-        for o in ofertas_inv:
-            oid = o.get("id")
-            lab = f"#{oid} — {o.get('nombre', 'Sin nombre')} — {lbl_estado.get(o.get('estado'), o.get('estado'))} — {float(o.get('total_a_aportar') or 0):.0f} €"
-            sel_labels.append(lab)
-            oferta_por_label[lab] = o
-
-        pick = st.selectbox("Seleccionar oferta guardada (este inmueble)", sel_labels, key=f"entrada_pick_oferta_{inv_id}")
-        b1, b2, b3 = st.columns(3)
-        with b1:
-            cargar = st.button("Cargar en la simulación", key=f"entrada_btn_cargar_{inv_id}")
-        with b2:
-            borrar = st.button("Eliminar oferta seleccionada", key=f"entrada_btn_borrar_{inv_id}")
-        with b3:
-            if st.session_state.get(k_edit):
-                st.caption(f"Editando oferta **#{st.session_state[k_edit]}** (puedes **Actualizar** abajo).")
-            else:
-                st.caption("Tras cargar, puedes editar y **Actualizar** esa misma oferta.")
-
-        if cargar and pick in oferta_por_label:
-            oc = oferta_por_label[pick]
-            st.session_state[k_precio] = float(oc.get("precio_compra") or 0)
-            st.session_state[k_not] = float(oc.get("notaria", 1000) or 1000)
-            st.session_state[k_reg] = float(oc.get("registro", 600) or 600)
-            st.session_state[k_ges] = float(oc.get("gestoria", 300) or 300)
-            st.session_state[k_ef] = float(oc.get("efectivo_adicional", 0) or 0)
-            st.session_state[k_pct] = float(oc.get("pct_financiacion", 90) or 90)
-            st.session_state[k_edit] = int(oc.get("id") or 0)
-            st.session_state[f"entrada_nombre_oferta_{inv_id}"] = oc.get("nombre") or ""
-            st.session_state[f"entrada_notas_oferta_{inv_id}"] = oc.get("notas") or ""
-            es = oc.get("estado") or "borrador"
-            st.session_state[f"entrada_estado_oferta_{inv_id}"] = (
-                estado_vals.index(es) if es in estado_vals else 0
-            )
+    if btn_guardar:
+        pl = _payload_oferta()
+        pl["fecha_creado"] = pl["fecha_actualizado"]
+        r = ghd.añadir_oferta_compra(usuario_id, pl)
+        if r:
+            st.session_state[k_edit] = int(r.get("id") or 0)
+            st.success(f"Guardada oferta #{r.get('id')}.")
             st.rerun()
+        else:
+            st.error("No se pudo guardar (¿GITHUB_TOKEN configurado?).")
 
-        if borrar and pick in oferta_por_label:
-            oid_del = int(oferta_por_label[pick].get("id") or 0)
-            if oid_del and ghd.eliminar_oferta_compra(usuario_id, oid_del):
-                st.session_state.pop(k_edit, None)
-                st.success("Oferta eliminada.")
+    if btn_actualizar:
+        edit_id = st.session_state.get(k_edit)
+        if not edit_id:
+            st.warning("Primero **Cargar** una oferta en la lista de abajo, o pulsa **Guardar oferta**.")
+        else:
+            pl = _payload_oferta()
+            pl["id"] = int(edit_id)
+            oc0 = next((x for x in ofertas_todas if x.get("id") == edit_id), None)
+            if oc0 and oc0.get("fecha_creado"):
+                pl["fecha_creado"] = oc0["fecha_creado"]
+            else:
+                pl["fecha_creado"] = pl["fecha_actualizado"]
+            if ghd.actualizar_oferta_compra(usuario_id, pl):
+                st.success(f"Oferta #{edit_id} actualizada.")
                 st.rerun()
             else:
-                st.error("No se pudo eliminar (¿token GitHub?).")
+                st.error("No se pudo actualizar.")
 
-        nombre_of = st.text_input(
-            "Nombre de la oferta",
-            placeholder="Ej. Primera oferta, Contraoferta vendedor…",
-            key=f"entrada_nombre_oferta_{inv_id}",
-        )
-        ix_est = st.selectbox(
-            "Estado de seguimiento",
-            list(range(len(estado_labels))),
-            format_func=lambda i: estado_labels[i],
-            key=f"entrada_estado_oferta_{inv_id}",
-        )
-        estado_sel = estado_vals[ix_est]
-        notas_of = st.text_area("Notas (opcional)", key=f"entrada_notas_oferta_{inv_id}", height=68)
-
-        def _payload_oferta() -> dict:
-            t2 = _totales_entrada_gastos(
-                precio_compra, inv, notaria, registro, gestoria, efectivo_adicional, pct_financiacion
+    st.markdown("---")
+    st.markdown("**Ofertas guardadas (este inmueble)**")
+    if ofertas_inv:
+        rows = []
+        for o in ofertas_inv:
+            rows.append(
+                {
+                    "id": o.get("id"),
+                    "Nombre": o.get("nombre", ""),
+                    "Estado": lbl_estado.get(o.get("estado"), o.get("estado", "")),
+                    "Precio (€)": o.get("precio_compra", 0),
+                    "Efectivo adicional (€)": round(float(o.get("efectivo_adicional") or 0), 0),
+                    "Total a aportar (€)": round(float(o.get("total_a_aportar") or 0), 0),
+                    "Actualizado": (o.get("fecha_actualizado") or "")[:16],
+                }
             )
-            now = datetime.now().isoformat(timespec="seconds")
-            return {
-                "inmueble_id": inv_id,
-                "hipoteca_id": hipoteca_id,
-                "nombre": (nombre_of or "").strip() or f"Oferta {now[:10]}",
-                "precio_compra": precio_compra,
-                "notaria": notaria,
-                "registro": registro,
-                "gestoria": gestoria,
-                "efectivo_adicional": efectivo_adicional,
-                "pct_financiacion": pct_financiacion,
-                "estado": estado_sel,
-                "notas": (notas_of or "").strip(),
-                "itp": t2["itp"],
-                "comision_inmobiliaria_pct": t2["comision_inmobiliaria_pct"],
-                "comision_inmobiliaria": t2["comision_inmobiliaria"],
-                "gastos_totales_compra": t2["gastos_totales"],
-                "entrada_compra": t2["entrada_compra"],
-                "total_a_aportar": t2["total_a_aportar"],
-                "fecha_actualizado": now,
-            }
+        st.dataframe(pd.DataFrame(rows), hide_index=True, use_container_width=True)
+    else:
+        st.info("Aún no hay ofertas guardadas para este inmueble. Rellena nombre/estado y pulsa **Guardar oferta**.")
 
-        g1, g2 = st.columns(2)
-        with g1:
-            if st.button("Guardar como nueva oferta", key=f"entrada_guardar_nueva_{inv_id}"):
-                pl = _payload_oferta()
-                pl["fecha_creado"] = pl["fecha_actualizado"]
-                r = ghd.añadir_oferta_compra(usuario_id, pl)
-                if r:
-                    st.session_state[k_edit] = int(r.get("id") or 0)
-                    st.success(f"Guardada oferta #{r.get('id')}.")
-                    st.rerun()
-                else:
-                    st.error("No se pudo guardar (¿GITHUB_TOKEN configurado?).")
-        with g2:
-            edit_id = st.session_state.get(k_edit)
-            if st.button(
-                "Actualizar oferta cargada",
-                key=f"entrada_guardar_actualizar_{inv_id}",
-                disabled=not bool(edit_id),
-            ):
-                if not edit_id:
-                    st.warning("Primero **Cargar** una oferta o guarda una nueva.")
-                else:
-                    pl = _payload_oferta()
-                    pl["id"] = int(edit_id)
-                    oc0 = next((x for x in ofertas_todas if x.get("id") == edit_id), None)
-                    if oc0 and oc0.get("fecha_creado"):
-                        pl["fecha_creado"] = oc0["fecha_creado"]
-                    else:
-                        pl["fecha_creado"] = pl["fecha_actualizado"]
-                    if ghd.actualizar_oferta_compra(usuario_id, pl):
-                        st.success(f"Oferta #{edit_id} actualizada.")
-                        st.rerun()
-                    else:
-                        st.error("No se pudo actualizar.")
+    sel_labels = ["— Cargar una oferta… —"]
+    oferta_por_label = {}
+    for o in ofertas_inv:
+        oid = o.get("id")
+        lab = f"#{oid} — {o.get('nombre', 'Sin nombre')} — {lbl_estado.get(o.get('estado'), o.get('estado'))} — {float(o.get('total_a_aportar') or 0):.0f} €"
+        sel_labels.append(lab)
+        oferta_por_label[lab] = o
+
+    pick = st.selectbox("Seleccionar oferta guardada (este inmueble)", sel_labels, key=f"entrada_pick_oferta_{inv_id}")
+    b1, b2 = st.columns(2)
+    with b1:
+        cargar = st.button("Cargar en la simulación", key=f"entrada_btn_cargar_{inv_id}")
+    with b2:
+        borrar = st.button("Eliminar oferta seleccionada", key=f"entrada_btn_borrar_{inv_id}")
+
+    if cargar and pick in oferta_por_label:
+        oc = oferta_por_label[pick]
+        st.session_state[k_precio] = float(oc.get("precio_compra") or 0)
+        st.session_state[k_not] = float(oc.get("notaria", 1000) or 1000)
+        st.session_state[k_reg] = float(oc.get("registro", 600) or 600)
+        st.session_state[k_ges] = float(oc.get("gestoria", 300) or 300)
+        st.session_state[k_ef] = float(oc.get("efectivo_adicional", 0) or 0)
+        st.session_state[k_pct] = float(oc.get("pct_financiacion", 90) or 90)
+        st.session_state[k_edit] = int(oc.get("id") or 0)
+        st.session_state[f"entrada_nombre_oferta_{inv_id}"] = oc.get("nombre") or ""
+        st.session_state[f"entrada_notas_oferta_{inv_id}"] = oc.get("notas") or ""
+        es = oc.get("estado") or "borrador"
+        st.session_state[f"entrada_estado_oferta_{inv_id}"] = (
+            estado_vals.index(es) if es in estado_vals else 0
+        )
+        st.rerun()
+
+    if borrar and pick in oferta_por_label:
+        oid_del = int(oferta_por_label[pick].get("id") or 0)
+        if oid_del and ghd.eliminar_oferta_compra(usuario_id, oid_del):
+            st.session_state.pop(k_edit, None)
+            st.success("Oferta eliminada.")
+            st.rerun()
+        else:
+            st.error("No se pudo eliminar (¿token GitHub?).")
 
 
 def _tab_amortizar_o_invertir(usuario_id: int):
