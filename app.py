@@ -337,8 +337,8 @@ st.markdown(
     [data-theme="dark"] .stTabs [data-baseweb="tab"][aria-selected="true"] span { color: #64b5f6 !important; }
     /* Si el layout duplica el bloque de tabs (p. ej. en scroll), ocultar el segundo */
     [data-testid="stTabs"] ~ [data-testid="stTabs"] { display: none !important; }
-    /* Evitar que al hacer scroll se repita el bloque de login/contenido inicial (duplicado de layout) */
-    .block-container ~ .block-container { display: none !important; }
+    /* NO ocultar .block-container ~ .block-container: en algunos layouts el contenido de las pestañas
+       va en un segundo contenedor y quedaría invisible (p. ej. solo login duplicado visible). */
     /* Ocultar bloques que contienen el formulario de login cuando están después de las pestañas (duplicado al scroll) */
     [data-testid="stVerticalBlock"]:has([data-testid="stForm"]) ~ [data-testid="stVerticalBlock"]:has([data-testid="stForm"]) { display: none !important; }
     </style>
@@ -2179,10 +2179,49 @@ def _tab_entrada_gastos_financiacion(usuario_id: int):
     comision_inmobiliaria_pct = float(inv.get("comision_venta_pct", 0) or 0) if inv.get("inmobiliaria") else 0.0
     comision_inmobiliaria = importe * comision_inmobiliaria_pct / 100.0
 
-    # Gastos (según tu lista)
-    notaria = 1000.0
-    registro = 600.0
-    gestoria = 300.0
+    # Gastos: valores por defecto editables
+    st.markdown("**Gastos estimados (€)**")
+    gc1, gc2, gc3 = st.columns(3)
+    with gc1:
+        notaria = float(
+            st.number_input(
+                "Notaría",
+                min_value=0.0,
+                value=1000.0,
+                step=50.0,
+                key="entrada_notaria",
+            )
+        )
+    with gc2:
+        registro = float(
+            st.number_input(
+                "Registro",
+                min_value=0.0,
+                value=600.0,
+                step=50.0,
+                key="entrada_registro",
+            )
+        )
+    with gc3:
+        gestoria = float(
+            st.number_input(
+                "Gestoría",
+                min_value=0.0,
+                value=300.0,
+                step=50.0,
+                key="entrada_gestoria",
+            )
+        )
+    efectivo_adicional = float(
+        st.number_input(
+            "Dinero adicional en efectivo (€)",
+            min_value=0.0,
+            value=0.0,
+            step=100.0,
+            key="entrada_efectivo_adicional",
+            help="Otros desembolsos en efectivo que quieras sumar al total (mobiliario, reforma, reserva, etc.). No forma parte de los gastos de compra anteriores.",
+        )
+    )
     itp = importe * (ITP_PCT / 100.0)
 
     gastos_totales = notaria + registro + gestoria + comision_inmobiliaria + itp
@@ -2204,8 +2243,11 @@ def _tab_entrada_gastos_financiacion(usuario_id: int):
         st.metric("Entrada (parte compra)", f"{entrada_compra:.0f} €")
 
     with col2:
-        total_entrada = entrada_compra + gastos_totales
-        st.metric("Total a aportar (entrada + gastos)", f"{total_entrada:.0f} €")
+        total_entrada = entrada_compra + gastos_totales + efectivo_adicional
+        st.metric(
+            "Total a aportar (entrada + gastos + efectivo adicional)",
+            f"{total_entrada:.0f} €",
+        )
         st.caption(f"Hipoteca seleccionada: {h.get('nombre_entidad','')} — {h.get('nombre_hipoteca','')}")
 
     st.markdown("---")
@@ -2216,7 +2258,11 @@ def _tab_entrada_gastos_financiacion(usuario_id: int):
         st.caption(f"Comisión inmobiliaria ({comision_inmobiliaria_pct:.1f}%): {comision_inmobiliaria:.0f} €")
     else:
         st.caption("Comisión inmobiliaria: 0 € (particular o sin comisión)")
-    st.caption(f"Total gastos: {gastos_totales:.0f} €")
+    st.caption(f"Total gastos (compra): {gastos_totales:.0f} €")
+    st.caption(
+        f"Dinero adicional en efectivo: {efectivo_adicional:.0f} € "
+        "(sumado al total de arriba; no entra en «gastos de compra»)."
+    )
 
 
 def _tab_amortizar_o_invertir(usuario_id: int):
@@ -2825,7 +2871,7 @@ def main():
 
 
 def _ocultar_login_duplicado_en_scroll():
-    """Inyecta un script que oculta en el documento principal cualquier bloque con 'Usuario existente' que esté después de las pestañas (duplicado al hacer scroll)."""
+    """Oculta solo duplicados del bloque de login fuera del árbol de pestañas (no toca contenido dentro de st.tabs)."""
     html = """
     <script>
     (function() {
@@ -2835,7 +2881,12 @@ def _ocultar_login_duplicado_en_scroll():
       var blocks = doc.querySelectorAll('[data-testid="stVerticalBlock"]');
       for (var i = 0; i < blocks.length; i++) {
         var el = blocks[i];
-        if (el.textContent.indexOf('Usuario existente') !== -1 && (tabs.compareDocumentPosition(el) & 4) === 4)
+        var t = el.textContent || '';
+        // Nunca ocultar nada dentro del widget de pestañas (evita borrar «Entrada y gastos», etc.)
+        if (tabs.contains(el)) continue;
+        // Solo el bloque típico de login duplicado (mismo texto que main() al no haber sesión)
+        if (t.indexOf('Usuario existente') === -1 || t.indexOf('Inicio de sesión') === -1) continue;
+        if ((tabs.compareDocumentPosition(el) & 4) === 4)
           el.style.setProperty('display', 'none', 'important');
       }
     })();
