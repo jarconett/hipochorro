@@ -292,6 +292,44 @@ def get_fotos_inmueble_urls(usuario_id: int, inmueble_id: int, branch: str = "ma
         return []
 
 
+def get_fotos_urls_map_usuario(usuario_id: int, branch: str = "main") -> dict:
+    """
+    Lista todas las carpetas u{usuario_id}_i{inmueble_id} bajo inmuebles_fotos y devuelve
+    {inmueble_id: [urls raw ordenadas]}. Evita N llamadas independientes desde la app cuando
+    se muestra la agenda completa (las URLs ya están en GitHub; la caché de Streamlit reduce
+    llamadas repetidas a la API de GitHub entre reruns).
+    """
+    repo = _repo()
+    if not repo:
+        return {}
+    try:
+        root = repo.get_contents(INMUEBLES_FOTOS_DIR)
+    except Exception:
+        return {}
+    prefix = f"u{usuario_id}_i"
+    out = {}
+    items = root if isinstance(root, list) else [root]
+    for item in items:
+        if getattr(item, "type", None) != "dir" or not item.name.startswith(prefix):
+            continue
+        try:
+            iid = int(item.name.split("_i", 1)[1])
+        except (ValueError, IndexError):
+            continue
+        try:
+            inner = repo.get_contents(item.path)
+            if not isinstance(inner, list):
+                inner = [inner]
+            urls = []
+            for c in inner:
+                if c.name.endswith((".jpg", ".jpeg", ".png")):
+                    urls.append(get_logo_raw_url(c.path, branch))
+            out[iid] = sorted(urls)
+        except Exception:
+            out[iid] = []
+    return out
+
+
 def _path_sunlight(usuario_id: int, inmueble_id: int) -> str:
     return f"{INMUEBLES_SUNLIGHT_DIR}/u{usuario_id}_i{inmueble_id}.json"
 

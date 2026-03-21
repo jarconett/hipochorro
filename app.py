@@ -10,6 +10,7 @@ _root = Path(__file__).resolve().parent
 if str(_root) not in sys.path:
     sys.path.insert(0, str(_root))
 
+import html
 import json
 import math
 import re
@@ -24,6 +25,13 @@ from urllib.parse import urljoin, urlparse
 
 from lib import github_data as ghd
 from lib import amortizacion as am
+
+
+@st.cache_data(ttl=600, show_spinner=False)
+def _cached_fotos_urls_map(usuario_id: int) -> dict[int, tuple[str, ...]]:
+    """URLs de fotos por inmueble (GitHub). Caché 10 min para no repetir listados en cada rerun."""
+    m = ghd.get_fotos_urls_map_usuario(usuario_id)
+    return {int(k): tuple(v) for k, v in m.items()}
 try:
     from lib import zonas_climaticas_cte as zcte
 except ImportError:
@@ -61,7 +69,7 @@ HELP_TAE = (
 APIFY_TOKEN_SECRET = "APIFY_TOKEN_SECRET"
 
 # Versión de la aplicación (visible en sidebar y changelog)
-VERSION_APP = "1.14.1"
+VERSION_APP = "1.14.2"
 
 # Gastos de compra (sobre precio de la vivienda / ITP)
 ITP_PCT = 7.0           # Impuesto de Transmisiones Patrimoniales: % sobre precio vivienda
@@ -1682,6 +1690,7 @@ def _editor_inmueble(usuario_id: int, inv: dict):
         if ghd.guardar_inmuebles(usuario_id, inmuebles):
             if st.session_state.get("inmueble_seleccionado") and st.session_state.inmueble_seleccionado.get("id") == inv_id:
                 st.session_state.inmueble_seleccionado = None
+            _cached_fotos_urls_map.clear()
             st.success("Inmueble eliminado.")
             st.rerun()
         else:
@@ -1855,21 +1864,17 @@ def agenda_inmuebles(usuario_id: int):
                     d = _duracion_minutos_a_destino(inv, destino_gps)
                     return (d is None, d if d is not None else 1e9)
                 lista = sorted(lista, key=_clave_duracion)
+        # Una sola lectura de fotos desde GitHub (mapa + caché); evita N llamadas por inmueble en cada rerun.
+        fotos_map_ui = _cached_fotos_urls_map(usuario_id)
         for inv in lista:
             cat = _categoria_inmueble(inv)
             emoji = "🟢" if cat == CATEGORIA_INTERESADOS else "🔵"
             d_min = _duracion_minutos_a_destino(inv, destino_gps)
             titulo = f"{emoji} {_titulo_inmueble(inv, d_min)}"
-            fotos_urls = ghd.get_fotos_inmueble_urls(usuario_id, inv.get("id"))
+            fotos_urls = list(fotos_map_ui.get(inv.get("id") or 0, ()))
             col_thumb, col_exp = st.columns([0.08, 0.92])
             with col_thumb:
-                if fotos_urls:
-                    try:
-                        st.image(fotos_urls[0], width="stretch")
-                    except Exception:
-                        st.caption("—")
-                else:
-                    st.caption("—")
+                st.caption("📷" if fotos_urls else "—")
             with col_exp:
                 inv_id = inv.get("id")
                 with st.expander(titulo):
@@ -1881,10 +1886,13 @@ def agenda_inmuebles(usuario_id: int):
                     if minutos_destino is not None:
                         st.caption(f"🚗 **{minutos_destino} min** en coche a {destino_gps}")
                     if fotos_urls:
-                        try:
-                            st.image(fotos_urls[0], caption="Foto del anuncio", width="stretch")
-                        except Exception:
-                            pass
+                        u0 = html.escape(fotos_urls[0], quote=True)
+                        st.markdown(
+                            f'<p><img src="{u0}" alt="Foto" loading="lazy" '
+                            f'style="max-width:100%;height:auto;border-radius:8px;"/></p>',
+                            unsafe_allow_html=True,
+                        )
+                        st.caption("Foto del anuncio (almacenada en GitHub)")
                     hab = inv.get("habitaciones")
                     ban = inv.get("banos")
                     ase = inv.get("aseo")
@@ -2094,7 +2102,7 @@ def agenda_inmuebles(usuario_id: int):
                             if not seleccionados:
                                 st.warning("Marca al menos una foto para añadir.")
                             else:
-                                existentes = len(ghd.get_fotos_inmueble_urls(usuario_id, inv_id))
+                                existentes = len(fotos_urls)
                                 subidas = 0
                                 for idx, (_, url) in enumerate(seleccionados):
                                     b = _descargar_imagen_bytes(url)
@@ -2102,6 +2110,7 @@ def agenda_inmuebles(usuario_id: int):
                                         ghd.subir_foto_inmueble(usuario_id, inv_id, b, existentes + idx + 1)
                                         subidas += 1
                                 st.session_state.fotos_extraidas = None
+                                _cached_fotos_urls_map.clear()
                                 st.success(f"Se han añadido {subidas} foto(s) a la ficha.")
                                 st.rerun()
                         if st.button("Cancelar", key=f"btn_cancel_fotos_{inv_id}"):
@@ -3166,6 +3175,7 @@ def main():
         st.markdown(f"**Versión actual: {VERSION_APP}**")
         st.markdown("""
         - **1.14.1** — Ficha de inmueble: campo **valor medio viviendas del barrio** (€), opcional; en la ficha se compara con el precio del anuncio. Incluido en el comparador de inmuebles.
+        - **1.14.2** — **Rendimiento agenda:** mapa de fotos en GitHub (`get_fotos_urls_map_usuario`) + caché 10 min (`st.cache_data`) para no listar la misma carpeta en cada rerun; miniatura de lista sin `st.image` (solo icono); foto en ficha con `<img loading="lazy">` (menos trabajo en el servidor). Invalidación de caché al añadir fotos.
         - **1.14.0** — «Entrada y gastos»: precio de compra tomado de la ficha y **editable** para comparar ofertas o contraofertas; **ofertas guardadas** en GitHub (`data/ofertas_compra/`) con nombre, notas, totales y estados de seguimiento (Borrador, Enviada, Rechazada, Aceptada, Contraoferta); cargar / actualizar / eliminar por inmueble.
         - **1.13.0** — Nueva pestaña «Entrada y gastos»: selecciona hipoteca e inmueble de la agenda y calcula entrada total para un % de financiación (por defecto 90%) con gastos fijos (notaría 1000 €, registro 600 €, gestoría 300 €) + ITP 7% + comisión inmobiliaria del inmueble si aplica.
         - **1.12.0** — Horas de sol (JSON): el archivo de exposición solar se guarda en un fichero aparte en GitHub (`data/inmuebles_sunlight/`) en lugar de dentro del JSON del inmueble, evitando timeouts y «Connection lost» al subir. Lectura vía `get_sunlight_inmueble`; migración automática de datos legacy embebidos al guardar la ficha. Irradiación (kWh/m²·año) y cálculo de placas con eficiencia y PR desde datos reales del inmueble.
