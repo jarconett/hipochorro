@@ -1,0 +1,41 @@
+{
+  "combinaciones": [
+    {
+      "id": 1,
+      "nombre": "Por defecto",
+      "importes": {
+        "magdalena": 0.0,
+        "alberto": 0.0,
+        "javier": 0.0,
+        "irene": 0.0,
+        "efectivo": 0.0
+      },
+      "incluir": {
+        "magdalena": true,
+        "alberto": true,
+        "javier": true,
+        "irene": true,
+        "efectivo": true
+      }
+    },
+    {
+      "id": 2,
+      "nombre": "maximo",
+      "importes": {
+        "magdalena": 15000.0,
+        "alberto": 0.0,
+        "javier": 14000.0,
+        "irene": 20000.0,
+        "efectivo": 20000.0
+      },
+      "incluir": {
+        "magdalena": true,
+        "alberto": true,
+        "javier": true,
+        "irene": true,
+        "efectivo": true
+      }
+    }
+  ],
+  "combinacion_activa_id": 2
+}
