@@ -70,7 +70,7 @@ HELP_TAE = (
 APIFY_TOKEN_SECRET = "APIFY_TOKEN_SECRET"
 
 # Versión de la aplicación (visible en sidebar y changelog)
-VERSION_APP = "1.16.0"
+VERSION_APP = "1.16.1"
 
 # Gastos de compra (sobre precio de la vivienda / ITP)
 ITP_PCT = 7.0           # Impuesto de Transmisiones Patrimoniales: % sobre precio vivienda
@@ -2287,6 +2287,20 @@ def _aport_clamp_combo_ix() -> None:
         st.session_state["_aport_applied_combo_ix"] = -999
 
 
+def _aport_flush_pending_combo_ix() -> None:
+    """Aplica el índice de combinación pendiente antes del selectbox del sidebar.
+
+    Streamlit no permite asignar a la key de un widget después de instanciarlo;
+    la pestaña «Entrada y gastos» corre después del sidebar, así que crear/eliminar
+    combinación debe dejar el índice en `_aport_pending_combo_ix` y aplicarlo aquí.
+    """
+    if "_aport_pending_combo_ix" not in st.session_state:
+        return
+    v = int(st.session_state.pop("_aport_pending_combo_ix"))
+    st.session_state["aport_combo_ix"] = v
+    st.session_state["_aport_applied_combo_ix"] = v
+
+
 def _sync_aportacion_usuario(usuario_id: int) -> None:
     prev = st.session_state.get("_aport_uid")
     if prev is not None and prev != usuario_id:
@@ -2299,6 +2313,7 @@ def _sync_aportacion_usuario(usuario_id: int) -> None:
         st.session_state.pop("_aport_combinaciones", None)
         st.session_state.pop("_aport_applied_combo_ix", None)
         st.session_state.pop("aport_combo_ix", None)
+        st.session_state.pop("_aport_pending_combo_ix", None)
         st.session_state.pop("aport_activa_id", None)
     st.session_state["_aport_uid"] = usuario_id
 
@@ -2782,14 +2797,13 @@ def _tab_entrada_gastos_financiacion(usuario_id: int):
             aid_del = int(st.session_state.get("aport_activa_id") or 0)
             combos_d = copy.deepcopy(combo_list)
             combos_d = [c for c in combos_d if int(c.get("id", 0) or 0) != aid_del]
-            st.session_state["_aport_combinaciones"] = combos_d
             new_a = int(combos_d[0]["id"])
-            st.session_state["aport_activa_id"] = new_a
-            st.session_state["aport_combo_ix"] = 0
-            _aport_aplicar_combo_a_session(combos_d[0])
-            st.session_state["_aport_applied_combo_ix"] = 0
             doc_d = {"combinaciones": combos_d, "combinacion_activa_id": new_a}
             if ghd.guardar_aportacion_efectivo(usuario_id, doc_d):
+                st.session_state["_aport_combinaciones"] = combos_d
+                st.session_state["aport_activa_id"] = new_a
+                st.session_state["_aport_pending_combo_ix"] = 0
+                _aport_aplicar_combo_a_session(combos_d[0])
                 st.success("Combinación eliminada.")
                 st.rerun()
             else:
@@ -2798,16 +2812,16 @@ def _tab_entrada_gastos_financiacion(usuario_id: int):
         nombre_nueva = st.text_input("Nombre para nueva combinación", placeholder="Ej. Escenario solo efectivo")
         if st.form_submit_button("➕ Crear combinación con los valores actuales y guardar en GitHub"):
             imp_n, inc_n = _aport_snapshot_session()
-            combos_n = copy.deepcopy(st.session_state.get("_aport_combinaciones") or [])
-            new_id = _next_aport_combo_id(combos_n)
+            combos_prev = copy.deepcopy(st.session_state.get("_aport_combinaciones") or [])
+            new_id = _next_aport_combo_id(combos_prev)
             nombre_ok = (nombre_nueva or "").strip() or f"Combinación {new_id}"
+            combos_n = copy.deepcopy(combos_prev)
             combos_n.append({"id": new_id, "nombre": nombre_ok, "importes": imp_n, "incluir": inc_n})
-            st.session_state["_aport_combinaciones"] = combos_n
-            st.session_state["aport_activa_id"] = new_id
-            st.session_state["aport_combo_ix"] = len(combos_n) - 1
-            st.session_state["_aport_applied_combo_ix"] = len(combos_n) - 1
             doc_n = {"combinaciones": combos_n, "combinacion_activa_id": new_id}
             if ghd.guardar_aportacion_efectivo(usuario_id, doc_n):
+                st.session_state["_aport_combinaciones"] = combos_n
+                st.session_state["aport_activa_id"] = new_id
+                st.session_state["_aport_pending_combo_ix"] = len(combos_n) - 1
                 st.success(f"Combinación «{nombre_ok}» creada y guardada.")
                 st.rerun()
             else:
@@ -3295,6 +3309,7 @@ def main():
 
     _sync_aportacion_usuario(u["id"])
     _init_aportacion_widgets_from_github(u["id"])
+    _aport_flush_pending_combo_ix()
 
     if "gps_destino" not in st.session_state:
         st.session_state.gps_destino = "Motril, Granada"
@@ -3427,6 +3442,7 @@ def main():
         st.subheader("Changelog")
         st.markdown(f"**Versión actual: {VERSION_APP}**")
         st.markdown("""
+        - **1.16.1** — **Corrección:** al crear o eliminar una combinación desde la pestaña no se puede asignar a la key del `selectbox` del sidebar en el mismo run; se usa `_aport_pending_combo_ix` y `_aport_flush_pending_combo_ix()` antes del widget. Crear/eliminar solo actualiza la sesión tras guardar bien en GitHub.
         - **1.16.0** — **Aportación adicional:** varias **combinaciones** de importes por concepto; selector en el **sidebar** (al cambiar se guarda en GitHub cuál está activa); en «Entrada y gastos» se **actualiza** la combinación activa, se **crea** otra con los valores actuales o se **elimina** una. Los JSON antiguos (solo `importes`/`incluir`) se leen como una combinación «Por defecto».
         - **1.15.0** — **Entrada y gastos:** la aportación adicional se desglosa en cinco conceptos (Magdalena, Alberto, Javier, Irene, efectivo genérico); casillas **Incluir** en el sidebar; guardado en GitHub (`data/aportacion_efectivo/`) con el formulario al pie de la pestaña. Las ofertas guardadas incluyen el desglose y siguen guardando el total `efectivo_adicional` para compatibilidad; ofertas antiguas al cargar vuelcan el total en «Dinero en efectivo».
         - **1.14.1** — Ficha de inmueble: campo **valor medio viviendas del barrio** (€), opcional; en la ficha se compara con el precio del anuncio. Incluido en el comparador de inmuebles.
