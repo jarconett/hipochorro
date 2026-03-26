@@ -21,6 +21,44 @@
       "fecha_actualizado": "2026-03-20T18:15:18",
       "fecha_creado": "2026-03-20T18:15:18",
       "id": 1
+    },
+    {
+      "inmueble_id": 3,
+      "hipoteca_id": 2,
+      "nombre": "Contraoferta 294k",
+      "precio_compra": 260000.0,
+      "notaria": 1000.0,
+      "registro": 600.0,
+      "gestoria": 300.0,
+      "efectivo_adicional": 69000.0,
+      "efectivo_por_concepto": {
+        "magdalena": 15000.0,
+        "alberto": 0.0,
+        "javier": 14000.0,
+        "irene": 20000.0,
+        "efectivo_marta": 10000.0,
+        "efectivo_irene": 10000.0
+      },
+      "efectivo_incluir_conceptos": {
+        "magdalena": true,
+        "alberto": true,
+        "javier": true,
+        "irene": true,
+        "efectivo_marta": true,
+        "efectivo_irene": true
+      },
+      "pct_financiacion": 90.0,
+      "estado": "borrador",
+      "notas": "",
+      "itp": 18200.0,
+      "comision_inmobiliaria_pct": 3.0,
+      "comision_inmobiliaria": 7800.0,
+      "gastos_totales_compra": 27900.0,
+      "entrada_compra": 26000.0,
+      "total_a_aportar": 122900.0,
+      "fecha_actualizado": "2026-03-26T13:49:34",
+      "fecha_creado": "2026-03-26T13:49:34",
+      "id": 2
     }
   ]
 }
