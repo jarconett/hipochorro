@@ -26,14 +26,16 @@
         "alberto": 0.0,
         "javier": 14000.0,
         "irene": 20000.0,
-        "efectivo": 20000.0
+        "efectivo_marta": 10000.0,
+        "efectivo_irene": 10000.0
       },
       "incluir": {
         "magdalena": true,
         "alberto": true,
         "javier": true,
         "irene": true,
-        "efectivo": true
+        "efectivo_marta": true,
+        "efectivo_irene": true
       }
     }
   ],
