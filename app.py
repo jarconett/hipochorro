@@ -70,7 +70,7 @@ HELP_TAE = (
 APIFY_TOKEN_SECRET = "APIFY_TOKEN_SECRET"
 
 # Versión de la aplicación (visible en sidebar y changelog)
-VERSION_APP = "1.16.1"
+VERSION_APP = "1.17.0"
 
 # Gastos de compra (sobre precio de la vivienda / ITP)
 ITP_PCT = 7.0           # Impuesto de Transmisiones Patrimoniales: % sobre precio vivienda
@@ -93,7 +93,8 @@ CONCEPTOS_EFECTIVO_APORTACION = [
     ("alberto", "Dinero Alberto"),
     ("javier", "Dinero Javier"),
     ("irene", "Dinero Irene"),
-    ("efectivo", "Dinero en efectivo"),
+    ("efectivo_marta", "Dinero efectivo Marta"),
+    ("efectivo_irene", "Dinero efectivo Irene"),
 ]
 
 # Opciones certificado energético (consumo y emisiones)
@@ -2206,9 +2207,28 @@ def _default_aportacion_dicts():
     return d_imp, d_inc
 
 
+def _aport_importes_incluir_desde_raw(importes_raw: dict | None, incluir_raw: dict | None) -> tuple[dict, dict]:
+    """Importes/incluir alineados con CONCEPTOS; el antiguo campo `efectivo` pasa a efectivo_marta."""
+    imp_def, inc_def = _default_aportacion_dicts()
+    ri = dict(importes_raw or {})
+    legacy_imp = float(ri.pop("efectivo", 0) or 0)
+    di = {**imp_def, **{k: float(v or 0) for k, v in ri.items() if k in imp_def}}
+    di["efectivo_marta"] = float(di.get("efectivo_marta", 0) or 0) + legacy_imp
+
+    inc_orig = incluir_raw or {}
+    raw_inc = dict(inc_orig)
+    legacy_inc_present = "efectivo" in raw_inc
+    legacy_inc_val = raw_inc.pop("efectivo", None)
+    du = {**inc_def, **{k: bool(v) for k, v in raw_inc.items() if k in inc_def}}
+    if legacy_inc_present and "efectivo_marta" not in inc_orig and "efectivo_irene" not in inc_orig:
+        ev = bool(legacy_inc_val)
+        du["efectivo_marta"] = ev
+        du["efectivo_irene"] = ev
+    return di, du
+
+
 def _normalizar_doc_aportacion(raw: dict) -> dict:
     """Convierte JSON de GitHub (o formato legacy) a {combinaciones, combinacion_activa_id}."""
-    imp_def, inc_def = _default_aportacion_dicts()
     combos_in = raw.get("combinaciones")
     if isinstance(combos_in, list) and len(combos_in) > 0:
         out = []
@@ -2225,8 +2245,7 @@ def _normalizar_doc_aportacion(raw: dict) -> dict:
             seen.add(cid)
             next_free = max(next_free, cid + 1)
             nombre = ((c.get("nombre") or "") or f"Combinación {cid}").strip() or f"Combinación {cid}"
-            di = {**imp_def, **{k: float(v or 0) for k, v in (c.get("importes") or {}).items()}}
-            du = {**inc_def, **{k: bool(v) for k, v in (c.get("incluir") or {}).items()}}
+            di, du = _aport_importes_incluir_desde_raw(c.get("importes"), c.get("incluir"))
             out.append({"id": cid, "nombre": nombre, "importes": di, "incluir": du})
         if out:
             activa = int(raw.get("combinacion_activa_id") or out[0]["id"])
@@ -2234,8 +2253,7 @@ def _normalizar_doc_aportacion(raw: dict) -> dict:
             if activa not in ids_ok:
                 activa = out[0]["id"]
             return {"combinaciones": out, "combinacion_activa_id": activa}
-    di = {**imp_def, **{k: float(v or 0) for k, v in (raw.get("importes") or {}).items()}}
-    du = {**inc_def, **{k: bool(v) for k, v in (raw.get("incluir") or {}).items()}}
+    di, du = _aport_importes_incluir_desde_raw(raw.get("importes"), raw.get("incluir"))
     return {"combinaciones": [{"id": 1, "nombre": "Por defecto", "importes": di, "incluir": du}], "combinacion_activa_id": 1}
 
 
@@ -2442,14 +2460,27 @@ def _tab_entrada_gastos_financiacion(usuario_id: int):
         if ed and isinstance(ed, dict):
             for k, _ in CONCEPTOS_EFECTIVO_APORTACION:
                 st.session_state[f"aport_imp_{k}"] = float(ed.get(k, 0) or 0)
+            leg_ed = float(ed.get("efectivo", 0) or 0)
+            if leg_ed:
+                st.session_state["aport_imp_efectivo_marta"] = float(
+                    st.session_state.get("aport_imp_efectivo_marta", 0) or 0
+                ) + leg_ed
         else:
             total_old = float(pend_oferta.get("efectivo_adicional", 0) or 0)
             for k, _ in CONCEPTOS_EFECTIVO_APORTACION:
                 st.session_state[f"aport_imp_{k}"] = 0.0
-            st.session_state["aport_imp_efectivo"] = total_old
+            st.session_state["aport_imp_efectivo_marta"] = total_old
         if ei and isinstance(ei, dict):
             for k, _ in CONCEPTOS_EFECTIVO_APORTACION:
                 st.session_state[f"aport_inc_{k}"] = bool(ei.get(k, True))
+            if (
+                "efectivo" in ei
+                and "efectivo_marta" not in ei
+                and "efectivo_irene" not in ei
+            ):
+                ev = bool(ei["efectivo"])
+                st.session_state["aport_inc_efectivo_marta"] = ev
+                st.session_state["aport_inc_efectivo_irene"] = ev
         else:
             for k, _ in CONCEPTOS_EFECTIVO_APORTACION:
                 st.session_state[f"aport_inc_{k}"] = True
@@ -3442,6 +3473,7 @@ def main():
         st.subheader("Changelog")
         st.markdown(f"**Versión actual: {VERSION_APP}**")
         st.markdown("""
+        - **1.17.0** — **Aportación:** el concepto «Dinero en efectivo» se sustituye por **Dinero efectivo Marta** y **Dinero efectivo Irene** (se mantienen «Dinero Irene» y el resto). Los datos antiguos con clave `efectivo` se migran sumando el importe a Marta y replicando «incluir» en ambos efectivos si aplica.
         - **1.16.1** — **Corrección:** al crear o eliminar una combinación desde la pestaña no se puede asignar a la key del `selectbox` del sidebar en el mismo run; se usa `_aport_pending_combo_ix` y `_aport_flush_pending_combo_ix()` antes del widget. Crear/eliminar solo actualiza la sesión tras guardar bien en GitHub.
         - **1.16.0** — **Aportación adicional:** varias **combinaciones** de importes por concepto; selector en el **sidebar** (al cambiar se guarda en GitHub cuál está activa); en «Entrada y gastos» se **actualiza** la combinación activa, se **crea** otra con los valores actuales o se **elimina** una. Los JSON antiguos (solo `importes`/`incluir`) se leen como una combinación «Por defecto».
         - **1.15.0** — **Entrada y gastos:** la aportación adicional se desglosa en cinco conceptos (Magdalena, Alberto, Javier, Irene, efectivo genérico); casillas **Incluir** en el sidebar; guardado en GitHub (`data/aportacion_efectivo/`) con el formulario al pie de la pestaña. Las ofertas guardadas incluyen el desglose y siguen guardando el total `efectivo_adicional` para compatibilidad; ofertas antiguas al cargar vuelcan el total en «Dinero en efectivo».
