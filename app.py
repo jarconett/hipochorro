@@ -70,7 +70,7 @@ HELP_TAE = (
 APIFY_TOKEN_SECRET = "APIFY_TOKEN_SECRET"
 
 # Versión de la aplicación (visible en sidebar y changelog)
-VERSION_APP = "1.17.0"
+VERSION_APP = "1.19.2"
 
 # Gastos de compra (sobre precio de la vivienda / ITP)
 ITP_PCT = 7.0           # Impuesto de Transmisiones Patrimoniales: % sobre precio vivienda
@@ -87,15 +87,17 @@ NOTARIA_PCT_DEL_ITP = 10.0   # Notaría: % del importe del ITP
 REGISTRO_PCT_DEL_ITP = 10.0  # Registro: % del importe del ITP
 GESTORIA_EUR = 300.0    # Gestoría: importe fijo (€)
 
-# Aportación adicional (efectivo) en «Entrada y gastos»: clave JSON → etiqueta UI
-CONCEPTOS_EFECTIVO_APORTACION = [
+# Provisiones de fondos (verde en «Entrada y gastos»): clave JSON → etiqueta UI (orden mostrado)
+PROVISIONES_FONDOS_CONCEPTOS = [
     ("magdalena", "Dinero Magdalena"),
-    ("alberto", "Dinero Alberto"),
     ("javier", "Dinero Javier"),
-    ("irene", "Dinero Irene"),
     ("efectivo_marta", "Dinero efectivo Marta"),
+    ("alberto", "Dinero Alberto"),
+    ("irene", "Dinero Irene"),
     ("efectivo_irene", "Dinero efectivo Irene"),
 ]
+# Alias: mismas claves en JSON GitHub / ofertas
+CONCEPTOS_EFECTIVO_APORTACION = PROVISIONES_FONDOS_CONCEPTOS
 
 # Opciones certificado energético (consumo y emisiones)
 CERT_ENERGETICO_OPCIONES = ["—", "A", "B", "C", "D", "E", "F", "G", "En trámite", "No disponible"]
@@ -2244,7 +2246,7 @@ def _normalizar_doc_aportacion(raw: dict) -> dict:
                 cid = next_free
             seen.add(cid)
             next_free = max(next_free, cid + 1)
-            nombre = ((c.get("nombre") or "") or f"Combinación {cid}").strip() or f"Combinación {cid}"
+            nombre = ((c.get("nombre") or "") or f"Perfil {cid}").strip() or f"Perfil {cid}"
             di, du = _aport_importes_incluir_desde_raw(c.get("importes"), c.get("incluir"))
             out.append({"id": cid, "nombre": nombre, "importes": di, "incluir": du})
         if out:
@@ -2254,7 +2256,7 @@ def _normalizar_doc_aportacion(raw: dict) -> dict:
                 activa = out[0]["id"]
             return {"combinaciones": out, "combinacion_activa_id": activa}
     di, du = _aport_importes_incluir_desde_raw(raw.get("importes"), raw.get("incluir"))
-    return {"combinaciones": [{"id": 1, "nombre": "Por defecto", "importes": di, "incluir": du}], "combinacion_activa_id": 1}
+    return {"combinaciones": [{"id": 1, "nombre": "Perfil por defecto", "importes": di, "incluir": du}], "combinacion_activa_id": 1}
 
 
 def _aport_aplicar_combo_a_session(combo: dict) -> None:
@@ -2371,26 +2373,116 @@ def _totales_entrada_gastos(
     notaria: float,
     registro: float,
     gestoria: float,
-    efectivo_adicional: float,
+    efectivo_para_compra: float,
+    provisiones_total: float,
     pct_financiacion: float,
+    *,
+    pct_comision_inmobiliaria: float | None = None,
+    comision_sobre_precio_mas_provisiones: bool = False,
 ) -> dict:
-    """Calcula ITP, comisión, gastos de compra, entrada y total a aportar (misma lógica que la pestaña)."""
-    comision_inmobiliaria_pct = float(inv.get("comision_venta_pct", 0) or 0) if inv.get("inmobiliaria") else 0.0
-    comision_inmobiliaria = precio_compra * comision_inmobiliaria_pct / 100.0
+    """ITP, comisión, gastos (incl. efectivo para compra), entrada; total neto = bruto − provisiones."""
+    if inv.get("inmobiliaria"):
+        pct = float(
+            pct_comision_inmobiliaria
+            if pct_comision_inmobiliaria is not None
+            else (inv.get("comision_venta_pct", 0) or 0)
+        )
+    else:
+        pct = 0.0
+    base_comision = precio_compra + (
+        provisiones_total if comision_sobre_precio_mas_provisiones else 0.0
+    )
+    comision_inmobiliaria = base_comision * pct / 100.0
     itp = precio_compra * (ITP_PCT / 100.0)
-    gastos_totales = notaria + registro + gestoria + comision_inmobiliaria + itp
+    gastos_totales = (
+        notaria + registro + gestoria + comision_inmobiliaria + itp + float(efectivo_para_compra or 0)
+    )
     financiado = precio_compra * pct_financiacion / 100.0
     entrada_compra = precio_compra - financiado
-    total_a_aportar = entrada_compra + gastos_totales + efectivo_adicional
+    total_bruto = entrada_compra + gastos_totales
+    total_neto = total_bruto - float(provisiones_total or 0)
     return {
-        "comision_inmobiliaria_pct": comision_inmobiliaria_pct,
+        "comision_inmobiliaria_pct": pct,
         "comision_inmobiliaria": comision_inmobiliaria,
+        "comision_base_incluye_efectivo": bool(comision_sobre_precio_mas_provisiones),
+        "base_comision_inmobiliaria": base_comision,
         "itp": itp,
         "gastos_totales": gastos_totales,
+        "efectivo_para_compra": float(efectivo_para_compra or 0),
+        "provisiones_total": float(provisiones_total or 0),
+        "total_bruto_antes_provisiones": total_bruto,
         "entrada_compra": entrada_compra,
-        "total_a_aportar": total_a_aportar,
+        "total_a_aportar": total_neto,
         "financiado": financiado,
     }
+
+
+def _bruto_necesario_oferta_guardada(o: dict) -> float:
+    """Total bruto (entrada + gastos de compra) que implicaba la simulación al guardar la oferta."""
+    if o.get("total_bruto_antes_provisiones") is not None:
+        try:
+            return float(o.get("total_bruto_antes_provisiones") or 0)
+        except (TypeError, ValueError):
+            pass
+    pt = o.get("provisiones_total")
+    if pt is not None:
+        try:
+            return float(o.get("total_a_aportar") or 0) + float(pt or 0)
+        except (TypeError, ValueError):
+            pass
+    try:
+        net = float(o.get("total_a_aportar") or 0)
+        ea = float(o.get("efectivo_adicional") or 0)
+    except (TypeError, ValueError):
+        return 0.0
+    if o.get("efectivo_para_compra") is not None or pt is not None:
+        return net + ea
+    return net
+
+
+def _render_bloque_cobertura(
+    titulo: str,
+    bruto: float,
+    gastos_compra: float,
+    provisiones: float,
+) -> None:
+    """Muestra si `provisiones` cubren el bruto y/o solo los gastos de compra (barras de progreso)."""
+    st.markdown(f"**{titulo}**")
+    if bruto <= 0 and gastos_compra <= 0:
+        st.caption("Sin datos de bruto o gastos en esta oferta.")
+        return
+    if bruto > 0:
+        cubre_b = provisiones >= bruto
+        pct_b = min(1.0, provisiones / bruto)
+        st.markdown(
+            f'<p style="margin:6px 0 2px 0;color:#64748b;font-size:0.9em">Total bruto (entrada + gastos): '
+            f"<strong>{bruto:,.0f} €</strong></p>",
+            unsafe_allow_html=True,
+        )
+        st.progress(pct_b)
+        colb = "#15803d" if cubre_b else "#b91c1c"
+        msgb = (
+            f"Con tus provisiones **cubres** el bruto; sobran **{provisiones - bruto:,.0f} €**."
+            if cubre_b
+            else f"**No alcanza** para el bruto: faltan **{bruto - provisiones:,.0f} €**."
+        )
+        st.markdown(f'<p style="margin:4px 0 12px 0;color:{colb};font-weight:600">{msgb}</p>', unsafe_allow_html=True)
+    if gastos_compra > 0:
+        cubre_g = provisiones >= gastos_compra
+        pct_g = min(1.0, provisiones / gastos_compra)
+        st.markdown(
+            f'<p style="margin:6px 0 2px 0;color:#64748b;font-size:0.9em">Solo <span style="color:#991b1b">gastos de compra</span> '
+            f"(ITP, notaría, registro, gestoría, comisión, efectivo para compra): <strong>{gastos_compra:,.0f} €</strong></p>",
+            unsafe_allow_html=True,
+        )
+        st.progress(pct_g)
+        colg = "#15803d" if cubre_g else "#b91c1c"
+        msgg = (
+            f"Las provisiones **cubren** solo los gastos de compra; sobran **{provisiones - gastos_compra:,.0f} €** respecto a ellos."
+            if cubre_g
+            else f"**No alcanza** solo para gastos de compra: faltan **{gastos_compra - provisiones:,.0f} €**."
+        )
+        st.markdown(f'<p style="margin:4px 0 16px 0;color:{colg};font-weight:600">{msgg}</p>', unsafe_allow_html=True)
 
 
 def _tab_entrada_gastos_financiacion(usuario_id: int):
@@ -2434,7 +2526,10 @@ def _tab_entrada_gastos_financiacion(usuario_id: int):
     k_not = f"entrada_notaria_{inv_id}"
     k_reg = f"entrada_registro_{inv_id}"
     k_ges = f"entrada_gestoria_{inv_id}"
+    k_ef_compra = f"entrada_efectivo_compra_{inv_id}"
     k_pct = f"entrada_pct_fin_{inv_id}"
+    k_com_pct = f"entrada_comision_pct_{inv_id}"
+    k_com_chk = f"entrada_comision_base_ef_{inv_id}"
     k_edit = f"entrada_oferta_edit_id_{inv_id}"
 
     precio_ficha = float(inv.get("importe", 0) or 0)
@@ -2445,7 +2540,20 @@ def _tab_entrada_gastos_financiacion(usuario_id: int):
     k_nombre = f"entrada_nombre_oferta_{inv_id}"
     k_notas = f"entrada_notas_oferta_{inv_id}"
     k_estado = f"entrada_estado_oferta_{inv_id}"
-    _keys_oferta_widgets = (k_precio, k_not, k_reg, k_ges, k_pct, k_nombre, k_notas, k_estado, k_edit)
+    _keys_oferta_widgets = (
+        k_precio,
+        k_not,
+        k_reg,
+        k_ges,
+        k_ef_compra,
+        k_pct,
+        k_com_pct,
+        k_com_chk,
+        k_nombre,
+        k_notas,
+        k_estado,
+        k_edit,
+    )
 
     if pend_oferta is not None:
         for _wk in _keys_oferta_widgets:
@@ -2454,6 +2562,7 @@ def _tab_entrada_gastos_financiacion(usuario_id: int):
         st.session_state[k_not] = float(pend_oferta.get("notaria", 1000) or 1000)
         st.session_state[k_reg] = float(pend_oferta.get("registro", 600) or 600)
         st.session_state[k_ges] = float(pend_oferta.get("gestoria", 300) or 300)
+        st.session_state[k_ef_compra] = float(pend_oferta.get("efectivo_para_compra", 0) or 0)
         st.session_state[k_pct] = float(pend_oferta.get("pct_financiacion", 90) or 90)
         ed = pend_oferta.get("efectivo_por_concepto")
         ei = pend_oferta.get("efectivo_incluir_conceptos")
@@ -2490,6 +2599,12 @@ def _tab_entrada_gastos_financiacion(usuario_id: int):
         es = pend_oferta.get("estado") or "borrador"
         _ev = [x[0] for x in ESTADOS_OFERTA_COMPRA]
         st.session_state[k_estado] = _ev.index(es) if es in _ev else 0
+        st.session_state[k_com_pct] = float(
+            pend_oferta.get("comision_inmobiliaria_pct")
+            if pend_oferta.get("comision_inmobiliaria_pct") is not None
+            else (inv.get("comision_venta_pct", 0) or 0)
+        )
+        st.session_state[k_com_chk] = bool(pend_oferta.get("comision_base_incluye_efectivo", False))
 
     if k_precio not in st.session_state:
         st.session_state[k_precio] = max(precio_ficha, 0.0)
@@ -2499,10 +2614,18 @@ def _tab_entrada_gastos_financiacion(usuario_id: int):
         st.session_state[k_reg] = 600.0
     if k_ges not in st.session_state:
         st.session_state[k_ges] = 300.0
+    if k_ef_compra not in st.session_state:
+        st.session_state[k_ef_compra] = 0.0
     if k_pct not in st.session_state:
         st.session_state[k_pct] = 90.0
     if k_edit not in st.session_state:
         st.session_state[k_edit] = None
+    if k_com_pct not in st.session_state:
+        st.session_state[k_com_pct] = (
+            float(inv.get("comision_venta_pct", 0) or 0) if inv.get("inmobiliaria") else 0.0
+        )
+    if k_com_chk not in st.session_state:
+        st.session_state[k_com_chk] = False
 
     st.markdown("**Precio de compra** (por defecto el de la ficha; edítalo para otra oferta o contraoferta)")
     precio_compra = float(
@@ -2515,10 +2638,23 @@ def _tab_entrada_gastos_financiacion(usuario_id: int):
         )
     )
 
-    comision_inmobiliaria_pct = float(inv.get("comision_venta_pct", 0) or 0) if inv.get("inmobiliaria") else 0.0
-    comision_inmobiliaria = precio_compra * comision_inmobiliaria_pct / 100.0
+    pct_financiacion = float(
+        st.number_input(
+            "Porcentaje de financiación (sobre precio de compra)",
+            min_value=0.0,
+            max_value=100.0,
+            step=1.0,
+            format="%.1f",
+            key=k_pct,
+        )
+    )
 
-    st.markdown("**Gastos estimados (€)**")
+    st.markdown(
+        '<p style="border-left:4px solid #b91c1c;padding:10px 14px;background:rgba(185,28,28,0.08);border-radius:8px;margin:12px 0 8px 0;">'
+        '<strong style="color:#991b1b">Gastos de compra</strong> '
+        "<span style=\"color:#64748b\">— salidas: tasas, honorarios, comisión, efectivo para la compra…</span></p>",
+        unsafe_allow_html=True,
+    )
     gc1, gc2, gc3 = st.columns(3)
     with gc1:
         notaria = float(
@@ -2548,29 +2684,56 @@ def _tab_entrada_gastos_financiacion(usuario_id: int):
             )
         )
 
-    st.markdown("**Aportación adicional por concepto (€)**")
-    st.caption(
-        "Solo se suman al total los conceptos marcados como **Incluir** en el sidebar. "
-        "Al pie puedes **guardar** importes e inclusiones en GitHub para la próxima sesión."
-    )
-    ac1, ac2 = st.columns(2)
-    for i, (k_con, lbl) in enumerate(CONCEPTOS_EFECTIVO_APORTACION):
-        col = ac1 if i % 2 == 0 else ac2
-        with col:
-            st.number_input(lbl, min_value=0.0, step=100.0, key=f"aport_imp_{k_con}")
-
-    efectivo_adicional, desglose_efectivo = _sum_efectivo_aportacion()
-
-    pct_financiacion = float(
+    efectivo_para_compra = float(
         st.number_input(
-            "Porcentaje de financiación (sobre precio de compra)",
+            "Dinero en efectivo para la compra (€)",
             min_value=0.0,
-            max_value=100.0,
-            step=1.0,
-            format="%.1f",
-            key=k_pct,
+            step=100.0,
+            key=k_ef_compra,
+            help="Gasto en efectivo de la operación (p. ej. arras, pagos al vendedor fuera de hipoteca). "
+            "Las **provisiones de fondos** (bloque verde) son aparte y restan del total neto.",
         )
     )
+
+    pct_comision_sim = float(inv.get("comision_venta_pct", 0) or 0) if inv.get("inmobiliaria") else 0.0
+    comision_sobre_mas_prov = False
+    if inv.get("inmobiliaria"):
+        st.markdown(
+            '<span style="color:#991b1b;font-weight:600">Comisión inmobiliaria (simulación)</span>',
+            unsafe_allow_html=True,
+        )
+        pct_comision_sim = float(
+            st.number_input(
+                "% comisión inmobiliaria (editable; por defecto el de la ficha)",
+                min_value=0.0,
+                max_value=20.0,
+                step=0.5,
+                key=k_com_pct,
+                help="Solo si la venta es por inmobiliaria.",
+            )
+        )
+        comision_sobre_mas_prov = bool(
+            st.checkbox(
+                "Calcular la comisión sobre **precio de compra + provisiones de fondos** (suma incluida en el sidebar)",
+                key=k_com_chk,
+                help="Si está desmarcado: % × precio. Si está marcado: % × (precio + suma de provisiones marcadas como incluir).",
+            )
+        )
+    else:
+        st.caption("Venta **particular** (sin inmobiliaria): comisión 0 € en este cálculo.")
+
+    st.markdown(
+        '<p style="border-left:4px solid #15803d;padding:10px 14px;background:rgba(21,128,61,0.08);border-radius:8px;margin:16px 0 8px 0;">'
+        '<strong style="color:#166534">Provisiones de fondos</strong> '
+        "<span style=\"color:#64748b\">— entran a favor y reducen el dinero neto que falta por aportar</span></p>",
+        unsafe_allow_html=True,
+    )
+    st.caption(
+        "Los **importes** y las casillas **Incluir** están en el **sidebar** (desplegable *Provisiones de fondos*). "
+        "Cada **perfil** guardado en GitHub conserva esos valores; cambia de perfil en el sidebar para comparar escenarios."
+    )
+
+    provisiones_total, desglose_provisiones = _sum_efectivo_aportacion()
 
     tot = _totales_entrada_gastos(
         precio_compra,
@@ -2578,60 +2741,160 @@ def _tab_entrada_gastos_financiacion(usuario_id: int):
         notaria,
         registro,
         gestoria,
-        efectivo_adicional,
+        efectivo_para_compra,
+        provisiones_total,
         pct_financiacion,
+        pct_comision_inmobiliaria=pct_comision_sim,
+        comision_sobre_precio_mas_provisiones=comision_sobre_mas_prov,
     )
     itp = tot["itp"]
     gastos_totales = tot["gastos_totales"]
     entrada_compra = tot["entrada_compra"]
     total_entrada = tot["total_a_aportar"]
+    total_bruto = tot["total_bruto_antes_provisiones"]
+    comision_inmobiliaria_pct = tot["comision_inmobiliaria_pct"]
+    comision_inmobiliaria = tot["comision_inmobiliaria"]
+    base_comision = tot["base_comision_inmobiliaria"]
 
     st.markdown("---")
-    col1, col2 = st.columns(2)
-    with col1:
+    c_m1, c_m2, c_m3, c_m4 = st.columns(4)
+    with c_m1:
         st.metric("Entrada (parte compra)", f"{entrada_compra:.0f} €")
-    with col2:
-        st.metric(
-            "Total a aportar (entrada + gastos + efectivo adicional)",
-            f"{total_entrada:.0f} €",
-        )
-        st.caption(f"Hipoteca: {h.get('nombre_entidad','')} — {h.get('nombre_hipoteca','')}")
+    with c_m2:
+        st.metric("Total gastos compra", f"{gastos_totales:.0f} €")
+    with c_m3:
+        st.metric("Total bruto (entrada + gastos)", f"{total_bruto:.0f} €")
+    with c_m4:
+        st.metric("Neto a aportar (tras provisiones)", f"{total_entrada:.0f} €")
+    st.caption(f"Hipoteca: {h.get('nombre_entidad','')} — {h.get('nombre_hipoteca','')}")
+    st.markdown(
+        f'<p style="margin:6px 0 0 0;"><span style="color:#15803d;font-weight:600">Provisiones incluidas:</span> '
+        f"{provisiones_total:.0f} €</p>",
+        unsafe_allow_html=True,
+    )
 
     if precio_compra <= 0:
         st.warning("Indica un **precio de compra** mayor que 0 para que los totales tengan sentido.")
 
     st.markdown("---")
+    st.markdown(
+        '<span style="color:#991b1b;font-weight:600">Desglose gastos (€)</span>',
+        unsafe_allow_html=True,
+    )
     st.caption(f"Precio en ficha del inmueble: {precio_ficha:.0f} € (referencia)")
     st.caption(f"Precio simulado: {precio_compra:.0f} €")
     st.caption(f"I.T.P ({ITP_PCT}%): {itp:.0f} €")
     st.caption(f"Notaría: {notaria:.0f} € · Registro: {registro:.0f} € · Gestoría: {gestoria:.0f} €")
+    st.markdown(
+        f'<p style="color:#991b1b;margin:0.2em 0;">Dinero en efectivo para la compra: <strong>{efectivo_para_compra:.0f} €</strong></p>',
+        unsafe_allow_html=True,
+    )
     if comision_inmobiliaria_pct > 0:
-        st.caption(f"Comisión inmobiliaria ({comision_inmobiliaria_pct:.1f}%): {comision_inmobiliaria:.0f} €")
+        base_txt = (
+            f"precio ({precio_compra:.0f} €) + provisiones ({provisiones_total:.0f} €)"
+            if tot.get("comision_base_incluye_efectivo")
+            else f"precio de compra ({precio_compra:.0f} €)"
+        )
+        st.caption(
+            f"Comisión inmobiliaria ({comision_inmobiliaria_pct:.1f}% sobre {base_txt}): {comision_inmobiliaria:.0f} € "
+            f"(base imponible comisión: {base_comision:.0f} €)"
+        )
     else:
         st.caption("Comisión inmobiliaria: 0 € (particular o sin comisión)")
-    st.caption(f"Total gastos (compra): {gastos_totales:.0f} €")
-    st.caption(
-        f"Aportación adicional (suma de conceptos incluidos): **{efectivo_adicional:.0f} €** "
-        "(no entra en «gastos de compra»)."
+    st.markdown(
+        f'<p style="color:#991b1b;margin:0.2em 0;">Suma gastos de compra (incl. efectivo para compra): <strong>{gastos_totales:.0f} €</strong></p>',
+        unsafe_allow_html=True,
     )
-    for lbl, (v_ef, inc_ef) in desglose_efectivo.items():
-        suf = "" if inc_ef else " — *no incluido en el total*"
-        st.caption(f"· {lbl}: {v_ef:.0f} €{suf}")
 
-    # --- Ofertas guardadas y seguimiento (sin expander: los botones de guardar deben verse siempre)
+    st.markdown(
+        '<span style="color:#15803d;font-weight:600">Desglose provisiones (€)</span>',
+        unsafe_allow_html=True,
+    )
+    for lbl, (v_ef, inc_ef) in desglose_provisiones.items():
+        suf = "" if inc_ef else " — <em>no incluida en la suma</em>"
+        st.markdown(
+            f'<p style="color:#166534;margin:0.15em 0;">· {lbl}: {v_ef:.0f} €{suf}</p>',
+            unsafe_allow_html=True,
+        )
+
+    ofertas_todas = ghd.get_ofertas_compra(usuario_id)
+    ofertas_inv = [o for o in ofertas_todas if int(o.get("inmueble_id") or 0) == inv_id]
+    ofertas_inv.sort(key=lambda x: x.get("fecha_actualizado") or x.get("fecha_creado") or "", reverse=True)
+    ofertas_tabla = sorted(
+        ofertas_todas,
+        key=lambda x: x.get("fecha_actualizado") or x.get("fecha_creado") or "",
+        reverse=True,
+    )
+
+    lbl_estado = {k: v for k, v in ESTADOS_OFERTA_COMPRA}
+    estado_vals = [x[0] for x in ESTADOS_OFERTA_COMPRA]
+    estado_labels = [x[1] for x in ESTADOS_OFERTA_COMPRA]
+
+    st.markdown("---")
+    st.subheader("¿Cubren tus provisiones cada simulación?")
+    combo_list_cov = st.session_state.get("_aport_combinaciones") or []
+    nom_combo_cov = next(
+        (
+            c["nombre"]
+            for c in combo_list_cov
+            if int(c.get("id", 0) or 0) == int(st.session_state.get("aport_activa_id") or 0)
+        ),
+        "—",
+    )
+    st.markdown(
+        '<div style="padding:12px 14px;background:rgba(21,128,61,0.1);border-radius:8px;border-left:4px solid #15803d;margin-bottom:12px;">'
+        f'<strong style="color:#166534">Provisiones activas (ahora):</strong> '
+        f'<span style="font-size:1.1em">{provisiones_total:,.0f} €</span><br/>'
+        f'<span style="color:#64748b;font-size:0.95em">Perfil «{html.escape(str(nom_combo_cov))}» en GitHub (sidebar). '
+        "Si pulsas «Actualizar perfil» al pie de esta pestaña, recuperas estos importes en otra sesión.</span></div>",
+        unsafe_allow_html=True,
+    )
+    st.caption(
+        "Se usan las **mismas provisiones** para todas las filas: las que tienes cargadas ahora. "
+        "Se compara con el **bruto** de cada simulación (entrada + gastos al guardar) y con los **gastos de compra** solos."
+    )
+    _render_bloque_cobertura("Simulación actual (valores de arriba en pantalla)", total_bruto, gastos_totales, provisiones_total)
+
+    if ofertas_tabla:
+        st.markdown("**Resumen: provisiones actuales vs cada oferta guardada**")
+        inv_por_id_r = {int(i.get("id", 0) or 0): i for i in inmuebles}
+
+        def _titulo_inm_r(oid: object) -> str:
+            i = inv_por_id_r.get(int(oid or 0))
+            return _titulo_inmueble(i) if i else f"ID {oid}"
+
+        res_rows = []
+        for o in ofertas_tabla:
+            br = _bruto_necesario_oferta_guardada(o)
+            gg = float(o.get("gastos_totales_compra") or 0)
+            cobre_b = provisiones_total >= br if br > 0 else None
+            cobre_g = provisiones_total >= gg if gg > 0 else None
+            res_rows.append(
+                {
+                    "id": o.get("id"),
+                    "Inmueble": _titulo_inm_r(o.get("inmueble_id"))[:42],
+                    "Oferta": (o.get("nombre") or "")[:30],
+                    "Bruto sim. (€)": round(br, 0) if br > 0 else None,
+                    "Gastos compra (€)": round(gg, 0) if gg > 0 else None,
+                    "¿Cubre bruto?": "Sí" if cobre_b is True else ("No" if cobre_b is False else "—"),
+                    "¿Cubre gastos?": "Sí" if cobre_g is True else ("No" if cobre_g is False else "—"),
+                    "Falta p. bruto (€)": round(max(0.0, br - provisiones_total), 0) if br > 0 else None,
+                }
+            )
+        st.dataframe(pd.DataFrame(res_rows), hide_index=True, use_container_width=True)
+        with st.expander("Barras de progreso por oferta (detalle visual)", expanded=False):
+            for o in ofertas_tabla:
+                br = _bruto_necesario_oferta_guardada(o)
+                gg = float(o.get("gastos_totales_compra") or 0)
+                tit = f"#{o.get('id')} — {(o.get('nombre') or 'Sin nombre')[:42]}"
+                _render_bloque_cobertura(tit, br, gg, provisiones_total)
+
     st.markdown("---")
     st.subheader("📋 Ofertas de compra y seguimiento")
     st.caption(
         "Pon nombre y estado y pulsa **Guardar oferta**. **Contraoferta:** cambia el precio arriba y guarda de nuevo "
         "o usa **Actualizar** si cargaste una oferta. Requiere `GITHUB_TOKEN` para persistir en el repo."
     )
-    ofertas_todas = ghd.get_ofertas_compra(usuario_id)
-    ofertas_inv = [o for o in ofertas_todas if int(o.get("inmueble_id") or 0) == inv_id]
-    ofertas_inv.sort(key=lambda x: x.get("fecha_actualizado") or x.get("fecha_creado") or "", reverse=True)
-
-    lbl_estado = {k: v for k, v in ESTADOS_OFERTA_COMPRA}
-    estado_vals = [x[0] for x in ESTADOS_OFERTA_COMPRA]
-    estado_labels = [x[1] for x in ESTADOS_OFERTA_COMPRA]
 
     nombre_of = st.text_input(
         "Nombre de la oferta",
@@ -2649,7 +2912,16 @@ def _tab_entrada_gastos_financiacion(usuario_id: int):
 
     def _payload_oferta() -> dict:
         t2 = _totales_entrada_gastos(
-            precio_compra, inv, notaria, registro, gestoria, efectivo_adicional, pct_financiacion
+            precio_compra,
+            inv,
+            notaria,
+            registro,
+            gestoria,
+            efectivo_para_compra,
+            provisiones_total,
+            pct_financiacion,
+            pct_comision_inmobiliaria=pct_comision_sim,
+            comision_sobre_precio_mas_provisiones=comision_sobre_mas_prov,
         )
         now = datetime.now().isoformat(timespec="seconds")
         return {
@@ -2660,7 +2932,10 @@ def _tab_entrada_gastos_financiacion(usuario_id: int):
             "notaria": notaria,
             "registro": registro,
             "gestoria": gestoria,
-            "efectivo_adicional": efectivo_adicional,
+            "efectivo_para_compra": efectivo_para_compra,
+            "provisiones_total": provisiones_total,
+            "total_bruto_antes_provisiones": t2["total_bruto_antes_provisiones"],
+            "efectivo_adicional": provisiones_total,
             "efectivo_por_concepto": {
                 k: float(st.session_state.get(f"aport_imp_{k}", 0) or 0) for k, _ in CONCEPTOS_EFECTIVO_APORTACION
             },
@@ -2668,6 +2943,7 @@ def _tab_entrada_gastos_financiacion(usuario_id: int):
                 k: bool(st.session_state.get(f"aport_inc_{k}", True)) for k, _ in CONCEPTOS_EFECTIVO_APORTACION
             },
             "pct_financiacion": pct_financiacion,
+            "comision_base_incluye_efectivo": bool(t2.get("comision_base_incluye_efectivo", False)),
             "estado": estado_sel,
             "notas": (notas_of or "").strip(),
             "itp": t2["itp"],
@@ -2730,24 +3006,41 @@ def _tab_entrada_gastos_financiacion(usuario_id: int):
                 st.error("No se pudo actualizar.")
 
     st.markdown("---")
-    st.markdown("**Ofertas guardadas (este inmueble)**")
-    if ofertas_inv:
+    st.markdown("**Todas tus ofertas guardadas**")
+    inv_por_id = {int(i.get("id", 0) or 0): i for i in inmuebles}
+
+    def _titulo_inmueble_oferta(oid: object) -> str:
+        i = inv_por_id.get(int(oid or 0))
+        return _titulo_inmueble(i) if i else f"Inmueble ID {oid}"
+
+    if ofertas_tabla:
         rows = []
-        for o in ofertas_inv:
+        for o in ofertas_tabla:
             rows.append(
                 {
                     "id": o.get("id"),
+                    "Inmueble": _titulo_inmueble_oferta(o.get("inmueble_id")),
                     "Nombre": o.get("nombre", ""),
                     "Estado": lbl_estado.get(o.get("estado"), o.get("estado", "")),
                     "Precio (€)": o.get("precio_compra", 0),
-                    "Efectivo adicional (€)": round(float(o.get("efectivo_adicional") or 0), 0),
+                    "Efectivo compra (€)": round(float(o.get("efectivo_para_compra") or 0), 0),
+                    "Provisiones (€)": round(
+                        float(o.get("provisiones_total", o.get("efectivo_adicional") or 0) or 0),
+                        0,
+                    ),
                     "Total a aportar (€)": round(float(o.get("total_a_aportar") or 0), 0),
                     "Actualizado": (o.get("fecha_actualizado") or "")[:16],
                 }
             )
         st.dataframe(pd.DataFrame(rows), hide_index=True, use_container_width=True)
+        st.caption(
+            "**Total a aportar** es el **neto** guardado al pulsar «Guardar oferta» o «Actualizar»: "
+            "entrada (precio − parte financiada) + **gastos de compra** (ITP, notaría, registro, gestoría, comisión y **efectivo para la compra**) "
+            "− **provisiones de fondos** (suma de los conceptos verdes marcados como incluir). "
+            "Ofertas antiguas sin `provisiones_total` usan la columna «Provisiones» a partir de `efectivo_adicional`."
+        )
     else:
-        st.info("Aún no hay ofertas guardadas para este inmueble. Rellena nombre/estado y pulsa **Guardar oferta**.")
+        st.info("Aún no hay ofertas guardadas. Rellena nombre/estado y pulsa **Guardar oferta**.")
 
     # Selectbox por índice (entero estable). Con etiquetas largas como valor, un rerun que cambiaba
     # el texto invalidaba la selección y Streamlit volvía al placeholder → «Cargar» no encontraba oferta.
@@ -2802,7 +3095,7 @@ def _tab_entrada_gastos_financiacion(usuario_id: int):
                 st.error("No se pudo eliminar (¿token GitHub?).")
 
     st.markdown("---")
-    st.subheader("Combinaciones de aportación (GitHub)")
+    st.subheader("Combinaciones de provisiones de fondos (GitHub)")
     combo_list = st.session_state.get("_aport_combinaciones") or []
     nom_activa = next(
         (c["nombre"] for c in combo_list if int(c.get("id", 0) or 0) == int(st.session_state.get("aport_activa_id") or 0)),
@@ -3352,15 +3645,17 @@ def main():
         help="Se usa para calcular la duración en coche desde cada inmueble y como criterio de ordenación en la agenda.",
     )
 
-    with st.sidebar.expander("💶 Aportación adicional (entrada)", expanded=False):
+    with st.sidebar.expander("💶 Provisiones de fondos", expanded=True):
         combos_sb = st.session_state.get("_aport_combinaciones") or []
         if combos_sb:
             _aport_clamp_combo_ix()
             st.selectbox(
-                "Combinación de importes",
+                "Perfil (escenarios distintos en GitHub)",
                 list(range(len(combos_sb))),
                 format_func=lambda i: combos_sb[i]["nombre"],
                 key="aport_combo_ix",
+                help="Cada perfil guarda los seis importes y qué conceptos están incluidos en la suma. "
+                "Al cambiar, se cargan esos valores y se actualiza en GitHub cuál está activo.",
             )
             ix_sb = int(st.session_state.get("aport_combo_ix", 0) or 0)
             last_sb = st.session_state.get("_aport_applied_combo_ix", -999)
@@ -3371,11 +3666,22 @@ def main():
                 ghd.guardar_aportacion_efectivo(u["id"], _aport_doc_para_persist())
                 st.rerun()
         else:
-            st.caption("Sin combinaciones; recarga tras iniciar sesión.")
-        for k_ap, lbl_ap in CONCEPTOS_EFECTIVO_APORTACION:
-            st.checkbox(f"Incluir {lbl_ap}", key=f"aport_inc_{k_ap}")
+            st.caption("Sin perfiles; recarga tras iniciar sesión.")
+        st.caption(
+            "Importes y **Incluir** del perfil activo: pulsa **Actualizar perfil** en *Entrada y gastos* para guardarlos en GitHub."
+        )
+        for k_ap, lbl_ap in PROVISIONES_FONDOS_CONCEPTOS:
+            r1, r2 = st.columns([5, 2])
+            with r1:
+                st.number_input(lbl_ap, min_value=0.0, step=100.0, key=f"aport_imp_{k_ap}")
+            with r2:
+                st.checkbox(
+                    "Incluir",
+                    key=f"aport_inc_{k_ap}",
+                    help=f"Cuenta «{lbl_ap}» en la suma que resta del neto a aportar",
+                )
         tot_sidebar, _ = _sum_efectivo_aportacion()
-        st.caption(f"Suma incluida: **{tot_sidebar:.0f} €**")
+        st.caption(f"Suma provisiones incluidas: **{tot_sidebar:.0f} €** (bloque verde en *Entrada y gastos*)")
 
     # Selector de inmueble: Interesados (verde) primero, separador, En Estudio (azul)
     inmuebles = ghd.get_inmuebles(u["id"])
@@ -3473,6 +3779,10 @@ def main():
         st.subheader("Changelog")
         st.markdown(f"**Versión actual: {VERSION_APP}**")
         st.markdown("""
+        - **1.19.2** — **Provisiones de fondos:** los **perfiles** guardados en GitHub (antes «combinaciones») son escenarios distintos de importes + Incluir; **selector y edición** en el **sidebar**; la pestaña *Entrada y gastos* conserva actualizar / crear / eliminar perfil. Mismo JSON en `data/aportacion_efectivo/`.
+        - **1.19.1** — **Entrada y gastos:** bloque «¿Cubren tus provisiones cada simulación?» (provisiones activas + combinación GitHub), barras de cobertura para lo que tienes en pantalla y **tabla + expander con barras** por cada oferta guardada (bruto de la simulación y gastos de compra frente a las mismas provisiones).
+        - **1.19.0** — **Entrada y gastos:** separación **gastos** (bloque rojo: notaría, registro, gestoría, **dinero en efectivo para la compra**, ITP, comisión) vs **provisiones de fondos** (bloque verde: Magdalena, Javier, efectivo Marta, Alberto, Irene, efectivo Irene). El **neto a aportar** = entrada + gastos − provisiones incluidas. La comisión puede calcularse sobre precio o precio + provisiones. Tabla de ofertas: columnas **Efectivo compra** y **Provisiones**; `total_a_aportar` guardado es el neto.
+        - **1.18.0** — **Entrada y gastos:** tabla de **todas** las ofertas con columna **Inmueble**; texto de ayuda sobre el origen del **total a aportar** guardado. **Comisión inmobiliaria:** % editable en la pestaña (por defecto el de la ficha), opción de calcular el % sobre precio o sobre precio + aportación adicional; se guarda en la oferta (`comision_base_incluye_efectivo`).
         - **1.17.0** — **Aportación:** el concepto «Dinero en efectivo» se sustituye por **Dinero efectivo Marta** y **Dinero efectivo Irene** (se mantienen «Dinero Irene» y el resto). Los datos antiguos con clave `efectivo` se migran sumando el importe a Marta y replicando «incluir» en ambos efectivos si aplica.
         - **1.16.1** — **Corrección:** al crear o eliminar una combinación desde la pestaña no se puede asignar a la key del `selectbox` del sidebar en el mismo run; se usa `_aport_pending_combo_ix` y `_aport_flush_pending_combo_ix()` antes del widget. Crear/eliminar solo actualiza la sesión tras guardar bien en GitHub.
         - **1.16.0** — **Aportación adicional:** varias **combinaciones** de importes por concepto; selector en el **sidebar** (al cambiar se guarda en GitHub cuál está activa); en «Entrada y gastos» se **actualiza** la combinación activa, se **crea** otra con los valores actuales o se **elimina** una. Los JSON antiguos (solo `importes`/`incluir`) se leen como una combinación «Por defecto».

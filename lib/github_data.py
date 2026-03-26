@@ -445,14 +445,14 @@ def eliminar_oferta_compra(usuario_id: int, oferta_id: int) -> bool:
     return guardar_ofertas_compra(usuario_id, ofertas)
 
 
-# --- Aportación adicional por conceptos (entrada / efectivo) ---
+# --- Perfiles de provisiones de fondos (mismo JSON que antes: aportacion_efectivo) ---
 
 def _path_aportacion_efectivo(usuario_id: int) -> str:
     return f"{APORTACION_EFECTIVO_DIR}/usuario_{usuario_id}.json"
 
 
 def get_aportacion_efectivo(usuario_id: int) -> dict:
-    """Lee JSON de aportación (combinaciones o formato legacy). Dict vacío si no hay fichero."""
+    """Lee perfiles de provisiones de fondos: combinaciones de importes + Incluir (o formato legacy). Vacío si no hay fichero."""
     repo = _repo()
     if not repo:
         return {}
@@ -465,7 +465,7 @@ def get_aportacion_efectivo(usuario_id: int) -> dict:
 
 
 def guardar_aportacion_efectivo(usuario_id: int, data: dict) -> bool:
-    """Persiste combinaciones de aportación: {'combinaciones': [...], 'combinacion_activa_id': int}."""
+    """Persiste perfiles de provisiones: {'combinaciones': [...], 'combinacion_activa_id': int}."""
     repo = _repo()
     if not repo:
         return False
@@ -473,10 +473,10 @@ def guardar_aportacion_efectivo(usuario_id: int, data: dict) -> bool:
     contenido = json.dumps(data, indent=2, ensure_ascii=False)
     try:
         c = repo.get_contents(path)
-        repo.update_file(path, "Actualizar aportación efectivo", contenido, c.sha)
+        repo.update_file(path, "Actualizar provisiones de fondos", contenido, c.sha)
     except Exception:
         try:
-            repo.create_file(path, "Crear aportación efectivo usuario", contenido)
+            repo.create_file(path, "Crear provisiones de fondos usuario", contenido)
         except Exception:
             return False
     return True
