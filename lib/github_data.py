@@ -452,7 +452,7 @@ def _path_aportacion_efectivo(usuario_id: int) -> str:
 
 
 def get_aportacion_efectivo(usuario_id: int) -> dict:
-    """Lee importes e inclusiones por concepto. Dict vacío si no hay fichero."""
+    """Lee JSON de aportación (combinaciones o formato legacy). Dict vacío si no hay fichero."""
     repo = _repo()
     if not repo:
         return {}
@@ -465,7 +465,7 @@ def get_aportacion_efectivo(usuario_id: int) -> dict:
 
 
 def guardar_aportacion_efectivo(usuario_id: int, data: dict) -> bool:
-    """Persiste {'importes': {clave: float}, 'incluir': {clave: bool}}."""
+    """Persiste combinaciones de aportación: {'combinaciones': [...], 'combinacion_activa_id': int}."""
     repo = _repo()
     if not repo:
         return False

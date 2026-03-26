@@ -10,6 +10,7 @@ _root = Path(__file__).resolve().parent
 if str(_root) not in sys.path:
     sys.path.insert(0, str(_root))
 
+import copy
 import html
 import json
 import math
@@ -69,7 +70,7 @@ HELP_TAE = (
 APIFY_TOKEN_SECRET = "APIFY_TOKEN_SECRET"
 
 # Versión de la aplicación (visible en sidebar y changelog)
-VERSION_APP = "1.15.0"
+VERSION_APP = "1.16.0"
 
 # Gastos de compra (sobre precio de la vivienda / ITP)
 ITP_PCT = 7.0           # Impuesto de Transmisiones Patrimoniales: % sobre precio vivienda
@@ -2205,6 +2206,87 @@ def _default_aportacion_dicts():
     return d_imp, d_inc
 
 
+def _normalizar_doc_aportacion(raw: dict) -> dict:
+    """Convierte JSON de GitHub (o formato legacy) a {combinaciones, combinacion_activa_id}."""
+    imp_def, inc_def = _default_aportacion_dicts()
+    combos_in = raw.get("combinaciones")
+    if isinstance(combos_in, list) and len(combos_in) > 0:
+        out = []
+        seen = set()
+        next_free = 1
+        for c in combos_in:
+            if not isinstance(c, dict):
+                continue
+            cid = int(c.get("id") or 0)
+            if cid <= 0 or cid in seen:
+                while next_free in seen:
+                    next_free += 1
+                cid = next_free
+            seen.add(cid)
+            next_free = max(next_free, cid + 1)
+            nombre = ((c.get("nombre") or "") or f"Combinación {cid}").strip() or f"Combinación {cid}"
+            di = {**imp_def, **{k: float(v or 0) for k, v in (c.get("importes") or {}).items()}}
+            du = {**inc_def, **{k: bool(v) for k, v in (c.get("incluir") or {}).items()}}
+            out.append({"id": cid, "nombre": nombre, "importes": di, "incluir": du})
+        if out:
+            activa = int(raw.get("combinacion_activa_id") or out[0]["id"])
+            ids_ok = {x["id"] for x in out}
+            if activa not in ids_ok:
+                activa = out[0]["id"]
+            return {"combinaciones": out, "combinacion_activa_id": activa}
+    di = {**imp_def, **{k: float(v or 0) for k, v in (raw.get("importes") or {}).items()}}
+    du = {**inc_def, **{k: bool(v) for k, v in (raw.get("incluir") or {}).items()}}
+    return {"combinaciones": [{"id": 1, "nombre": "Por defecto", "importes": di, "incluir": du}], "combinacion_activa_id": 1}
+
+
+def _aport_aplicar_combo_a_session(combo: dict) -> None:
+    for k, _ in CONCEPTOS_EFECTIVO_APORTACION:
+        st.session_state[f"aport_imp_{k}"] = float(combo["importes"].get(k, 0) or 0)
+        st.session_state[f"aport_inc_{k}"] = bool(combo["incluir"].get(k, True))
+
+
+def _aport_snapshot_session() -> tuple[dict, dict]:
+    imp = {k: float(st.session_state.get(f"aport_imp_{k}", 0) or 0) for k, _ in CONCEPTOS_EFECTIVO_APORTACION}
+    inc = {k: bool(st.session_state.get(f"aport_inc_{k}", True)) for k, _ in CONCEPTOS_EFECTIVO_APORTACION}
+    return imp, inc
+
+
+def _next_aport_combo_id(combinaciones: list) -> int:
+    return max((int(c.get("id", 0) or 0) for c in combinaciones), default=0) + 1
+
+
+def _aport_doc_para_persist() -> dict:
+    combos = copy.deepcopy(st.session_state.get("_aport_combinaciones") or [])
+    aid = int(st.session_state.get("aport_activa_id") or 0)
+    if combos and not any(int(c.get("id", 0) or 0) == aid for c in combos):
+        aid = int(combos[0]["id"])
+        st.session_state["aport_activa_id"] = aid
+    return {"combinaciones": combos, "combinacion_activa_id": aid}
+
+
+def _aport_actualizar_combo_activa_desde_session() -> None:
+    combos = copy.deepcopy(st.session_state.get("_aport_combinaciones") or [])
+    aid = st.session_state.get("aport_activa_id")
+    imp, inc = _aport_snapshot_session()
+    for i, c in enumerate(combos):
+        if int(c.get("id", 0) or 0) == int(aid or 0):
+            combos[i] = {"id": c["id"], "nombre": c["nombre"], "importes": imp, "incluir": inc}
+            break
+    st.session_state["_aport_combinaciones"] = combos
+
+
+def _aport_clamp_combo_ix() -> None:
+    combos = st.session_state.get("_aport_combinaciones") or []
+    if not combos:
+        return
+    ix = int(st.session_state.get("aport_combo_ix", 0) or 0)
+    mx = len(combos) - 1
+    clamped = max(0, min(ix, mx))
+    if ix != clamped:
+        st.session_state["aport_combo_ix"] = clamped
+        st.session_state["_aport_applied_combo_ix"] = -999
+
+
 def _sync_aportacion_usuario(usuario_id: int) -> None:
     prev = st.session_state.get("_aport_uid")
     if prev is not None and prev != usuario_id:
@@ -2214,6 +2296,10 @@ def _sync_aportacion_usuario(usuario_id: int) -> None:
         for sk in list(st.session_state.keys()):
             if isinstance(sk, str) and sk.startswith("_aport_github_hidratado_"):
                 st.session_state.pop(sk, None)
+        st.session_state.pop("_aport_combinaciones", None)
+        st.session_state.pop("_aport_applied_combo_ix", None)
+        st.session_state.pop("aport_combo_ix", None)
+        st.session_state.pop("aport_activa_id", None)
     st.session_state["_aport_uid"] = usuario_id
 
 
@@ -2221,15 +2307,16 @@ def _init_aportacion_widgets_from_github(usuario_id: int) -> None:
     flag = f"_aport_github_hidratado_{usuario_id}"
     if st.session_state.get(flag):
         return
-    imp_def, inc_def = _default_aportacion_dicts()
-    d = ghd.get_aportacion_efectivo(usuario_id)
-    importes = {**imp_def, **{k: float(v or 0) for k, v in (d.get("importes") or {}).items()}}
-    incluir = {**inc_def, **{k: bool(v) for k, v in (d.get("incluir") or {}).items()}}
-    for k, _ in CONCEPTOS_EFECTIVO_APORTACION:
-        if f"aport_imp_{k}" not in st.session_state:
-            st.session_state[f"aport_imp_{k}"] = importes.get(k, 0.0)
-        if f"aport_inc_{k}" not in st.session_state:
-            st.session_state[f"aport_inc_{k}"] = incluir.get(k, True)
+    raw = ghd.get_aportacion_efectivo(usuario_id)
+    doc = _normalizar_doc_aportacion(raw)
+    combos = copy.deepcopy(doc["combinaciones"])
+    st.session_state["_aport_combinaciones"] = combos
+    activa = int(doc["combinacion_activa_id"])
+    st.session_state["aport_activa_id"] = activa
+    ix = next((i for i, c in enumerate(combos) if int(c.get("id", 0) or 0) == activa), 0)
+    st.session_state["aport_combo_ix"] = ix
+    st.session_state["_aport_applied_combo_ix"] = ix
+    _aport_aplicar_combo_a_session(combos[ix])
     st.session_state[flag] = True
 
 
@@ -2669,16 +2756,60 @@ def _tab_entrada_gastos_financiacion(usuario_id: int):
                 st.error("No se pudo eliminar (¿token GitHub?).")
 
     st.markdown("---")
-    st.subheader("Guardar aportación por conceptos")
-    st.caption(
-        "Persiste en GitHub (`data/aportacion_efectivo/`) los **importes** editados arriba y las casillas **Incluir** del sidebar."
+    st.subheader("Combinaciones de aportación (GitHub)")
+    combo_list = st.session_state.get("_aport_combinaciones") or []
+    nom_activa = next(
+        (c["nombre"] for c in combo_list if int(c.get("id", 0) or 0) == int(st.session_state.get("aport_activa_id") or 0)),
+        "—",
     )
-    with st.form("form_guardar_aportacion_efectivo"):
-        if st.form_submit_button("💾 Guardar aportación en GitHub"):
-            imp = {k: float(st.session_state.get(f"aport_imp_{k}", 0) or 0) for k, _ in CONCEPTOS_EFECTIVO_APORTACION}
-            inc = {k: bool(st.session_state.get(f"aport_inc_{k}", True)) for k, _ in CONCEPTOS_EFECTIVO_APORTACION}
-            if ghd.guardar_aportacion_efectivo(usuario_id, {"importes": imp, "incluir": inc}):
-                st.success("Aportación guardada en GitHub.")
+    st.caption(
+        f"Combinación activa: **{nom_activa}** · {len(combo_list)} combinación(es). "
+        "En el **sidebar** eliges la combinación (la activa se escribe en GitHub al cambiar). "
+        "Aquí puedes **actualizar** la activa con los importes actuales, **crear** otra combinación o **eliminar** la activa."
+    )
+    u1, u2 = st.columns(2)
+    with u1:
+        if st.button("💾 Actualizar combinación activa en GitHub", key="aport_btn_update_github"):
+            _aport_actualizar_combo_activa_desde_session()
+            doc_u = _aport_doc_para_persist()
+            if ghd.guardar_aportacion_efectivo(usuario_id, doc_u):
+                st.success("Combinación activa guardada en GitHub.")
+                st.rerun()
+            else:
+                st.error("No se pudo guardar (¿GITHUB_TOKEN?).")
+    with u2:
+        if len(combo_list) > 1 and st.button("🗑️ Eliminar combinación activa", key="aport_btn_del_github"):
+            aid_del = int(st.session_state.get("aport_activa_id") or 0)
+            combos_d = copy.deepcopy(combo_list)
+            combos_d = [c for c in combos_d if int(c.get("id", 0) or 0) != aid_del]
+            st.session_state["_aport_combinaciones"] = combos_d
+            new_a = int(combos_d[0]["id"])
+            st.session_state["aport_activa_id"] = new_a
+            st.session_state["aport_combo_ix"] = 0
+            _aport_aplicar_combo_a_session(combos_d[0])
+            st.session_state["_aport_applied_combo_ix"] = 0
+            doc_d = {"combinaciones": combos_d, "combinacion_activa_id": new_a}
+            if ghd.guardar_aportacion_efectivo(usuario_id, doc_d):
+                st.success("Combinación eliminada.")
+                st.rerun()
+            else:
+                st.error("No se pudo guardar tras eliminar (¿GITHUB_TOKEN?).")
+    with st.form("form_nueva_combo_aportacion"):
+        nombre_nueva = st.text_input("Nombre para nueva combinación", placeholder="Ej. Escenario solo efectivo")
+        if st.form_submit_button("➕ Crear combinación con los valores actuales y guardar en GitHub"):
+            imp_n, inc_n = _aport_snapshot_session()
+            combos_n = copy.deepcopy(st.session_state.get("_aport_combinaciones") or [])
+            new_id = _next_aport_combo_id(combos_n)
+            nombre_ok = (nombre_nueva or "").strip() or f"Combinación {new_id}"
+            combos_n.append({"id": new_id, "nombre": nombre_ok, "importes": imp_n, "incluir": inc_n})
+            st.session_state["_aport_combinaciones"] = combos_n
+            st.session_state["aport_activa_id"] = new_id
+            st.session_state["aport_combo_ix"] = len(combos_n) - 1
+            st.session_state["_aport_applied_combo_ix"] = len(combos_n) - 1
+            doc_n = {"combinaciones": combos_n, "combinacion_activa_id": new_id}
+            if ghd.guardar_aportacion_efectivo(usuario_id, doc_n):
+                st.success(f"Combinación «{nombre_ok}» creada y guardada.")
+                st.rerun()
             else:
                 st.error("No se pudo guardar (¿GITHUB_TOKEN?).")
 
@@ -3176,6 +3307,25 @@ def main():
     )
 
     with st.sidebar.expander("💶 Aportación adicional (entrada)", expanded=False):
+        combos_sb = st.session_state.get("_aport_combinaciones") or []
+        if combos_sb:
+            _aport_clamp_combo_ix()
+            st.selectbox(
+                "Combinación de importes",
+                list(range(len(combos_sb))),
+                format_func=lambda i: combos_sb[i]["nombre"],
+                key="aport_combo_ix",
+            )
+            ix_sb = int(st.session_state.get("aport_combo_ix", 0) or 0)
+            last_sb = st.session_state.get("_aport_applied_combo_ix", -999)
+            if ix_sb != last_sb:
+                st.session_state["aport_activa_id"] = int(combos_sb[ix_sb]["id"])
+                _aport_aplicar_combo_a_session(combos_sb[ix_sb])
+                st.session_state["_aport_applied_combo_ix"] = ix_sb
+                ghd.guardar_aportacion_efectivo(u["id"], _aport_doc_para_persist())
+                st.rerun()
+        else:
+            st.caption("Sin combinaciones; recarga tras iniciar sesión.")
         for k_ap, lbl_ap in CONCEPTOS_EFECTIVO_APORTACION:
             st.checkbox(f"Incluir {lbl_ap}", key=f"aport_inc_{k_ap}")
         tot_sidebar, _ = _sum_efectivo_aportacion()
@@ -3277,6 +3427,7 @@ def main():
         st.subheader("Changelog")
         st.markdown(f"**Versión actual: {VERSION_APP}**")
         st.markdown("""
+        - **1.16.0** — **Aportación adicional:** varias **combinaciones** de importes por concepto; selector en el **sidebar** (al cambiar se guarda en GitHub cuál está activa); en «Entrada y gastos» se **actualiza** la combinación activa, se **crea** otra con los valores actuales o se **elimina** una. Los JSON antiguos (solo `importes`/`incluir`) se leen como una combinación «Por defecto».
         - **1.15.0** — **Entrada y gastos:** la aportación adicional se desglosa en cinco conceptos (Magdalena, Alberto, Javier, Irene, efectivo genérico); casillas **Incluir** en el sidebar; guardado en GitHub (`data/aportacion_efectivo/`) con el formulario al pie de la pestaña. Las ofertas guardadas incluyen el desglose y siguen guardando el total `efectivo_adicional` para compatibilidad; ofertas antiguas al cargar vuelcan el total en «Dinero en efectivo».
         - **1.14.1** — Ficha de inmueble: campo **valor medio viviendas del barrio** (€), opcional; en la ficha se compara con el precio del anuncio. Incluido en el comparador de inmuebles.
         - **1.14.2** — **Rendimiento agenda:** mapa de fotos en GitHub (`get_fotos_urls_map_usuario`) + caché 10 min (`st.cache_data`) para no listar la misma carpeta en cada rerun; miniatura de lista sin `st.image` (solo icono); foto en ficha con `<img loading="lazy">` (menos trabajo en el servidor). Invalidación de caché al añadir fotos.
