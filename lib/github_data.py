@@ -38,6 +38,7 @@ INMUEBLES_DIR = f"{DATA_DIR}/inmuebles"
 INMUEBLES_FOTOS_DIR = f"{DATA_DIR}/inmuebles_fotos"
 INMUEBLES_SUNLIGHT_DIR = f"{DATA_DIR}/inmuebles_sunlight"
 OFERTAS_COMPRA_DIR = f"{DATA_DIR}/ofertas_compra"
+APORTACION_EFECTIVO_DIR = f"{DATA_DIR}/aportacion_efectivo"
 LOGOS_DIR = f"{DATA_DIR}/logos"
 
 def _slug(texto: str) -> str:
@@ -442,3 +443,40 @@ def eliminar_oferta_compra(usuario_id: int, oferta_id: int) -> bool:
     """Elimina una oferta por id."""
     ofertas = [o for o in get_ofertas_compra(usuario_id) if o.get("id") != oferta_id]
     return guardar_ofertas_compra(usuario_id, ofertas)
+
+
+# --- Aportación adicional por conceptos (entrada / efectivo) ---
+
+def _path_aportacion_efectivo(usuario_id: int) -> str:
+    return f"{APORTACION_EFECTIVO_DIR}/usuario_{usuario_id}.json"
+
+
+def get_aportacion_efectivo(usuario_id: int) -> dict:
+    """Lee importes e inclusiones por concepto. Dict vacío si no hay fichero."""
+    repo = _repo()
+    if not repo:
+        return {}
+    path = _path_aportacion_efectivo(usuario_id)
+    try:
+        c = repo.get_contents(path)
+        return json.loads(base64.b64decode(c.content).decode())
+    except Exception:
+        return {}
+
+
+def guardar_aportacion_efectivo(usuario_id: int, data: dict) -> bool:
+    """Persiste {'importes': {clave: float}, 'incluir': {clave: bool}}."""
+    repo = _repo()
+    if not repo:
+        return False
+    path = _path_aportacion_efectivo(usuario_id)
+    contenido = json.dumps(data, indent=2, ensure_ascii=False)
+    try:
+        c = repo.get_contents(path)
+        repo.update_file(path, "Actualizar aportación efectivo", contenido, c.sha)
+    except Exception:
+        try:
+            repo.create_file(path, "Crear aportación efectivo usuario", contenido)
+        except Exception:
+            return False
+    return True

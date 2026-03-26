@@ -69,7 +69,7 @@ HELP_TAE = (
 APIFY_TOKEN_SECRET = "APIFY_TOKEN_SECRET"
 
 # Versión de la aplicación (visible en sidebar y changelog)
-VERSION_APP = "1.14.2"
+VERSION_APP = "1.15.0"
 
 # Gastos de compra (sobre precio de la vivienda / ITP)
 ITP_PCT = 7.0           # Impuesto de Transmisiones Patrimoniales: % sobre precio vivienda
@@ -85,6 +85,15 @@ ESTADOS_OFERTA_COMPRA = [
 NOTARIA_PCT_DEL_ITP = 10.0   # Notaría: % del importe del ITP
 REGISTRO_PCT_DEL_ITP = 10.0  # Registro: % del importe del ITP
 GESTORIA_EUR = 300.0    # Gestoría: importe fijo (€)
+
+# Aportación adicional (efectivo) en «Entrada y gastos»: clave JSON → etiqueta UI
+CONCEPTOS_EFECTIVO_APORTACION = [
+    ("magdalena", "Dinero Magdalena"),
+    ("alberto", "Dinero Alberto"),
+    ("javier", "Dinero Javier"),
+    ("irene", "Dinero Irene"),
+    ("efectivo", "Dinero en efectivo"),
+]
 
 # Opciones certificado energético (consumo y emisiones)
 CERT_ENERGETICO_OPCIONES = ["—", "A", "B", "C", "D", "E", "F", "G", "En trámite", "No disponible"]
@@ -2190,6 +2199,52 @@ def _tab_comparador_inmuebles(usuario_id: int):
     st.caption("Coste total compra incluye precio + comisión (si inmobiliaria) + ITP 7% + notaría + registro + gestoría.")
 
 
+def _default_aportacion_dicts():
+    d_imp = {k: 0.0 for k, _ in CONCEPTOS_EFECTIVO_APORTACION}
+    d_inc = {k: True for k, _ in CONCEPTOS_EFECTIVO_APORTACION}
+    return d_imp, d_inc
+
+
+def _sync_aportacion_usuario(usuario_id: int) -> None:
+    prev = st.session_state.get("_aport_uid")
+    if prev is not None and prev != usuario_id:
+        for k, _ in CONCEPTOS_EFECTIVO_APORTACION:
+            st.session_state.pop(f"aport_imp_{k}", None)
+            st.session_state.pop(f"aport_inc_{k}", None)
+        for sk in list(st.session_state.keys()):
+            if isinstance(sk, str) and sk.startswith("_aport_github_hidratado_"):
+                st.session_state.pop(sk, None)
+    st.session_state["_aport_uid"] = usuario_id
+
+
+def _init_aportacion_widgets_from_github(usuario_id: int) -> None:
+    flag = f"_aport_github_hidratado_{usuario_id}"
+    if st.session_state.get(flag):
+        return
+    imp_def, inc_def = _default_aportacion_dicts()
+    d = ghd.get_aportacion_efectivo(usuario_id)
+    importes = {**imp_def, **{k: float(v or 0) for k, v in (d.get("importes") or {}).items()}}
+    incluir = {**inc_def, **{k: bool(v) for k, v in (d.get("incluir") or {}).items()}}
+    for k, _ in CONCEPTOS_EFECTIVO_APORTACION:
+        if f"aport_imp_{k}" not in st.session_state:
+            st.session_state[f"aport_imp_{k}"] = importes.get(k, 0.0)
+        if f"aport_inc_{k}" not in st.session_state:
+            st.session_state[f"aport_inc_{k}"] = incluir.get(k, True)
+    st.session_state[flag] = True
+
+
+def _sum_efectivo_aportacion() -> tuple[float, dict]:
+    total = 0.0
+    desglose: dict = {}
+    for k, lbl in CONCEPTOS_EFECTIVO_APORTACION:
+        v = float(st.session_state.get(f"aport_imp_{k}", 0) or 0)
+        inc = bool(st.session_state.get(f"aport_inc_{k}", True))
+        desglose[lbl] = (v, inc)
+        if inc:
+            total += v
+    return total, desglose
+
+
 def _totales_entrada_gastos(
     precio_compra: float,
     inv: dict,
@@ -2259,7 +2314,6 @@ def _tab_entrada_gastos_financiacion(usuario_id: int):
     k_not = f"entrada_notaria_{inv_id}"
     k_reg = f"entrada_registro_{inv_id}"
     k_ges = f"entrada_gestoria_{inv_id}"
-    k_ef = f"entrada_efectivo_{inv_id}"
     k_pct = f"entrada_pct_fin_{inv_id}"
     k_edit = f"entrada_oferta_edit_id_{inv_id}"
 
@@ -2271,7 +2325,7 @@ def _tab_entrada_gastos_financiacion(usuario_id: int):
     k_nombre = f"entrada_nombre_oferta_{inv_id}"
     k_notas = f"entrada_notas_oferta_{inv_id}"
     k_estado = f"entrada_estado_oferta_{inv_id}"
-    _keys_oferta_widgets = (k_precio, k_not, k_reg, k_ges, k_ef, k_pct, k_nombre, k_notas, k_estado, k_edit)
+    _keys_oferta_widgets = (k_precio, k_not, k_reg, k_ges, k_pct, k_nombre, k_notas, k_estado, k_edit)
 
     if pend_oferta is not None:
         for _wk in _keys_oferta_widgets:
@@ -2280,8 +2334,23 @@ def _tab_entrada_gastos_financiacion(usuario_id: int):
         st.session_state[k_not] = float(pend_oferta.get("notaria", 1000) or 1000)
         st.session_state[k_reg] = float(pend_oferta.get("registro", 600) or 600)
         st.session_state[k_ges] = float(pend_oferta.get("gestoria", 300) or 300)
-        st.session_state[k_ef] = float(pend_oferta.get("efectivo_adicional", 0) or 0)
         st.session_state[k_pct] = float(pend_oferta.get("pct_financiacion", 90) or 90)
+        ed = pend_oferta.get("efectivo_por_concepto")
+        ei = pend_oferta.get("efectivo_incluir_conceptos")
+        if ed and isinstance(ed, dict):
+            for k, _ in CONCEPTOS_EFECTIVO_APORTACION:
+                st.session_state[f"aport_imp_{k}"] = float(ed.get(k, 0) or 0)
+        else:
+            total_old = float(pend_oferta.get("efectivo_adicional", 0) or 0)
+            for k, _ in CONCEPTOS_EFECTIVO_APORTACION:
+                st.session_state[f"aport_imp_{k}"] = 0.0
+            st.session_state["aport_imp_efectivo"] = total_old
+        if ei and isinstance(ei, dict):
+            for k, _ in CONCEPTOS_EFECTIVO_APORTACION:
+                st.session_state[f"aport_inc_{k}"] = bool(ei.get(k, True))
+        else:
+            for k, _ in CONCEPTOS_EFECTIVO_APORTACION:
+                st.session_state[f"aport_inc_{k}"] = True
         st.session_state[k_edit] = int(pend_oferta.get("id") or 0)
         st.session_state[k_nombre] = pend_oferta.get("nombre") or ""
         st.session_state[k_notas] = pend_oferta.get("notas") or ""
@@ -2297,8 +2366,6 @@ def _tab_entrada_gastos_financiacion(usuario_id: int):
         st.session_state[k_reg] = 600.0
     if k_ges not in st.session_state:
         st.session_state[k_ges] = 300.0
-    if k_ef not in st.session_state:
-        st.session_state[k_ef] = 0.0
     if k_pct not in st.session_state:
         st.session_state[k_pct] = 90.0
     if k_edit not in st.session_state:
@@ -2347,15 +2414,19 @@ def _tab_entrada_gastos_financiacion(usuario_id: int):
                 key=k_ges,
             )
         )
-    efectivo_adicional = float(
-        st.number_input(
-            "Dinero adicional en efectivo (€)",
-            min_value=0.0,
-            step=100.0,
-            key=k_ef,
-            help="Otros desembolsos en efectivo que quieras sumar al total (mobiliario, reforma, reserva, etc.).",
-        )
+
+    st.markdown("**Aportación adicional por concepto (€)**")
+    st.caption(
+        "Solo se suman al total los conceptos marcados como **Incluir** en el sidebar. "
+        "Al pie puedes **guardar** importes e inclusiones en GitHub para la próxima sesión."
     )
+    ac1, ac2 = st.columns(2)
+    for i, (k_con, lbl) in enumerate(CONCEPTOS_EFECTIVO_APORTACION):
+        col = ac1 if i % 2 == 0 else ac2
+        with col:
+            st.number_input(lbl, min_value=0.0, step=100.0, key=f"aport_imp_{k_con}")
+
+    efectivo_adicional, desglose_efectivo = _sum_efectivo_aportacion()
 
     pct_financiacion = float(
         st.number_input(
@@ -2407,9 +2478,12 @@ def _tab_entrada_gastos_financiacion(usuario_id: int):
         st.caption("Comisión inmobiliaria: 0 € (particular o sin comisión)")
     st.caption(f"Total gastos (compra): {gastos_totales:.0f} €")
     st.caption(
-        f"Dinero adicional en efectivo: {efectivo_adicional:.0f} € "
-        "(sumado al total de arriba; no entra en «gastos de compra»)."
+        f"Aportación adicional (suma de conceptos incluidos): **{efectivo_adicional:.0f} €** "
+        "(no entra en «gastos de compra»)."
     )
+    for lbl, (v_ef, inc_ef) in desglose_efectivo.items():
+        suf = "" if inc_ef else " — *no incluido en el total*"
+        st.caption(f"· {lbl}: {v_ef:.0f} €{suf}")
 
     # --- Ofertas guardadas y seguimiento (sin expander: los botones de guardar deben verse siempre)
     st.markdown("---")
@@ -2454,6 +2528,12 @@ def _tab_entrada_gastos_financiacion(usuario_id: int):
             "registro": registro,
             "gestoria": gestoria,
             "efectivo_adicional": efectivo_adicional,
+            "efectivo_por_concepto": {
+                k: float(st.session_state.get(f"aport_imp_{k}", 0) or 0) for k, _ in CONCEPTOS_EFECTIVO_APORTACION
+            },
+            "efectivo_incluir_conceptos": {
+                k: bool(st.session_state.get(f"aport_inc_{k}", True)) for k, _ in CONCEPTOS_EFECTIVO_APORTACION
+            },
             "pct_financiacion": pct_financiacion,
             "estado": estado_sel,
             "notas": (notas_of or "").strip(),
@@ -2587,6 +2667,20 @@ def _tab_entrada_gastos_financiacion(usuario_id: int):
                 st.rerun()
             else:
                 st.error("No se pudo eliminar (¿token GitHub?).")
+
+    st.markdown("---")
+    st.subheader("Guardar aportación por conceptos")
+    st.caption(
+        "Persiste en GitHub (`data/aportacion_efectivo/`) los **importes** editados arriba y las casillas **Incluir** del sidebar."
+    )
+    with st.form("form_guardar_aportacion_efectivo"):
+        if st.form_submit_button("💾 Guardar aportación en GitHub"):
+            imp = {k: float(st.session_state.get(f"aport_imp_{k}", 0) or 0) for k, _ in CONCEPTOS_EFECTIVO_APORTACION}
+            inc = {k: bool(st.session_state.get(f"aport_inc_{k}", True)) for k, _ in CONCEPTOS_EFECTIVO_APORTACION}
+            if ghd.guardar_aportacion_efectivo(usuario_id, {"importes": imp, "incluir": inc}):
+                st.success("Aportación guardada en GitHub.")
+            else:
+                st.error("No se pudo guardar (¿GITHUB_TOKEN?).")
 
 
 def _tab_amortizar_o_invertir(usuario_id: int):
@@ -3068,6 +3162,9 @@ def main():
         st.session_state.inmueble_seleccionado = None
         st.rerun()
 
+    _sync_aportacion_usuario(u["id"])
+    _init_aportacion_widgets_from_github(u["id"])
+
     if "gps_destino" not in st.session_state:
         st.session_state.gps_destino = "Motril, Granada"
     st.sidebar.markdown("**GPS**")
@@ -3077,6 +3174,12 @@ def main():
         key="gps_destino",
         help="Se usa para calcular la duración en coche desde cada inmueble y como criterio de ordenación en la agenda.",
     )
+
+    with st.sidebar.expander("💶 Aportación adicional (entrada)", expanded=False):
+        for k_ap, lbl_ap in CONCEPTOS_EFECTIVO_APORTACION:
+            st.checkbox(f"Incluir {lbl_ap}", key=f"aport_inc_{k_ap}")
+        tot_sidebar, _ = _sum_efectivo_aportacion()
+        st.caption(f"Suma incluida: **{tot_sidebar:.0f} €**")
 
     # Selector de inmueble: Interesados (verde) primero, separador, En Estudio (azul)
     inmuebles = ghd.get_inmuebles(u["id"])
@@ -3174,6 +3277,7 @@ def main():
         st.subheader("Changelog")
         st.markdown(f"**Versión actual: {VERSION_APP}**")
         st.markdown("""
+        - **1.15.0** — **Entrada y gastos:** la aportación adicional se desglosa en cinco conceptos (Magdalena, Alberto, Javier, Irene, efectivo genérico); casillas **Incluir** en el sidebar; guardado en GitHub (`data/aportacion_efectivo/`) con el formulario al pie de la pestaña. Las ofertas guardadas incluyen el desglose y siguen guardando el total `efectivo_adicional` para compatibilidad; ofertas antiguas al cargar vuelcan el total en «Dinero en efectivo».
         - **1.14.1** — Ficha de inmueble: campo **valor medio viviendas del barrio** (€), opcional; en la ficha se compara con el precio del anuncio. Incluido en el comparador de inmuebles.
         - **1.14.2** — **Rendimiento agenda:** mapa de fotos en GitHub (`get_fotos_urls_map_usuario`) + caché 10 min (`st.cache_data`) para no listar la misma carpeta en cada rerun; miniatura de lista sin `st.image` (solo icono); foto en ficha con `<img loading="lazy">` (menos trabajo en el servidor). Invalidación de caché al añadir fotos.
         - **1.14.0** — «Entrada y gastos»: precio de compra tomado de la ficha y **editable** para comparar ofertas o contraofertas; **ofertas guardadas** en GitHub (`data/ofertas_compra/`) con nombre, notas, totales y estados de seguimiento (Borrador, Enviada, Rechazada, Aceptada, Contraoferta); cargar / actualizar / eliminar por inmueble.
