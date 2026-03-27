@@ -2409,6 +2409,19 @@ def _aport_sidebar_selector_perfil(usuario_id: int) -> None:
         ghd.guardar_aportacion_efectivo(usuario_id, _aport_doc_para_persist())
         st.rerun()
 
+    tot_sb, des_sb = _sum_efectivo_aportacion()
+    st.sidebar.markdown(
+        '<span style="color:#15803d;font-weight:600;font-size:0.88rem;">Desglose provisiones (€)</span>',
+        unsafe_allow_html=True,
+    )
+    for lbl, (v_ef, inc_ef) in des_sb.items():
+        suf = "" if inc_ef else " — <em>no incluida en la suma</em>"
+        st.sidebar.markdown(
+            f'<p style="color:#166534;margin:0.12em 0;font-size:0.85rem;">· {html.escape(lbl)}: {v_ef:,.0f} €{suf}</p>',
+            unsafe_allow_html=True,
+        )
+    st.sidebar.caption(f"Total **incluido** en la simulación: **{tot_sb:,.0f} €**")
+
 
 def _ui_aportacion_fondos_entrada_tab(usuario_id: int) -> None:
     """Único desplegable ➕ ✏️ para perfiles, importes e Incluir (no duplicar widgets fuera de esta pestaña)."""
