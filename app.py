@@ -69,8 +69,8 @@ HELP_TAE = (
 # En Streamlit Cloud: Settings → Secrets → clave "APIFY_TOKEN_SECRET" con tu API token de apify.com
 APIFY_TOKEN_SECRET = "APIFY_TOKEN_SECRET"
 
-# Versión de la aplicación (visible en sidebar y changelog)
-VERSION_APP = "1.20.6"
+# Versión de la aplicación (visible bajo el título y en la pestaña Info; no en el pie del sidebar para no duplicar el branding de Streamlit Cloud)
+VERSION_APP = "1.20.7"
 
 # Gastos de compra (sobre precio de la vivienda / ITP)
 ITP_PCT = 7.0           # Impuesto de Transmisiones Patrimoniales: % sobre precio vivienda
@@ -4006,7 +4006,7 @@ def main():
         with c2:
             st.image(logo_img, width="stretch")
     st.title("Hipochorro")
-    st.caption("Simulador y comparador de hipotecas en España — datos en GitHub")
+    st.caption(f"Simulador y comparador de hipotecas en España — datos en GitHub · v{VERSION_APP}")
 
     # --- Inicio: usuario
     usuarios = ghd.get_usuarios()
@@ -4180,9 +4180,6 @@ def main():
             elif sel_o == -1 and last_o is not None:
                 st.session_state["_sidebar_entrada_oferta_aplicada_id"] = None
 
-    st.sidebar.markdown("---")
-    st.sidebar.caption(f"**Hipochorro** v{VERSION_APP}")
-
     tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs([
         "📝 Alta de hipotecas",
         "📊 Comparador",
@@ -4237,6 +4234,7 @@ def main():
         st.subheader("Changelog")
         st.markdown(f"**Versión actual: {VERSION_APP}**")
         st.markdown("""
+        - **1.20.7** — **Sidebar:** eliminado el pie «Hipochorro v…» que se **duplicaba** con el encabezado de la app en Streamlit Cloud. La **versión** queda bajo el título principal y en **Info**.
         - **1.20.6** — **Entrada y gastos:** un solo desplegable **➕ ✏️ Provisiones de fondos** (selector de perfil, importes, Incluir, **Guardar cambios**, **Guardar como nuevo perfil**, eliminar). Eliminada la duplicación con el sidebar (ahí solo resumen + enlace). Ofertas y barras de cobertura con título **➕ ✏️**. Orden: parámetros → provisiones → resumen.
         - **1.20.5** — **Desplegables alta/edición:** textos unificados **Guardar cambios** vs **Guardar como nuevo** (ofertas de compra, perfiles de provisiones en GitHub, alta hipoteca/inmueble). En ofertas, **Guardar cambios** a la izquierda (solo con oferta cargada/seleccionada).
         - **1.20.4** — **Entrada y gastos:** parámetros (precio, gastos, gestoría) dentro del expander ➕✏️; gestoría a ancho completo con ayuda al **importe por defecto** (`GESTORIA_EUR`). **Ofertas:** al seleccionar en el desplegable se aplica la oferta y se refresca el resumen (igual que «Cargar»).
