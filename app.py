@@ -70,7 +70,7 @@ HELP_TAE = (
 APIFY_TOKEN_SECRET = "APIFY_TOKEN_SECRET"
 
 # Versión de la aplicación (visible en sidebar y changelog)
-VERSION_APP = "1.19.2"
+VERSION_APP = "1.19.4"
 
 # Gastos de compra (sobre precio de la vivienda / ITP)
 ITP_PCT = 7.0           # Impuesto de Transmisiones Patrimoniales: % sobre precio vivienda
@@ -2378,20 +2378,18 @@ def _totales_entrada_gastos(
     pct_financiacion: float,
     *,
     pct_comision_inmobiliaria: float | None = None,
-    comision_sobre_precio_mas_provisiones: bool = False,
+    comision_sobre_precio_mas_efectivo_compra: bool = False,
 ) -> dict:
-    """ITP, comisión, gastos (incl. efectivo para compra), entrada; total neto = bruto − provisiones."""
-    if inv.get("inmobiliaria"):
-        pct = float(
-            pct_comision_inmobiliaria
-            if pct_comision_inmobiliaria is not None
-            else (inv.get("comision_venta_pct", 0) or 0)
-        )
+    """ITP, comisión (sobre precio o precio + efectivo para la compra si aplica), gastos, entrada; neto = bruto − provisiones."""
+    # El % de simulación (widget) manda si viene informado; así la comisión entra en gastos aunque la ficha sea «particular».
+    if pct_comision_inmobiliaria is not None:
+        pct = max(0.0, float(pct_comision_inmobiliaria))
+    elif inv.get("inmobiliaria"):
+        pct = float(inv.get("comision_venta_pct", 0) or 0)
     else:
         pct = 0.0
-    base_comision = precio_compra + (
-        provisiones_total if comision_sobre_precio_mas_provisiones else 0.0
-    )
+    ef_compra = float(efectivo_para_compra or 0)
+    base_comision = precio_compra + (ef_compra if comision_sobre_precio_mas_efectivo_compra else 0.0)
     comision_inmobiliaria = base_comision * pct / 100.0
     itp = precio_compra * (ITP_PCT / 100.0)
     gastos_totales = (
@@ -2404,7 +2402,7 @@ def _totales_entrada_gastos(
     return {
         "comision_inmobiliaria_pct": pct,
         "comision_inmobiliaria": comision_inmobiliaria,
-        "comision_base_incluye_efectivo": bool(comision_sobre_precio_mas_provisiones),
+        "comision_base_incluye_efectivo": bool(comision_sobre_precio_mas_efectivo_compra),
         "base_comision_inmobiliaria": base_comision,
         "itp": itp,
         "gastos_totales": gastos_totales,
@@ -2529,7 +2527,8 @@ def _tab_entrada_gastos_financiacion(usuario_id: int):
     k_ef_compra = f"entrada_efectivo_compra_{inv_id}"
     k_pct = f"entrada_pct_fin_{inv_id}"
     k_com_pct = f"entrada_comision_pct_{inv_id}"
-    k_com_chk = f"entrada_comision_base_ef_{inv_id}"
+    k_com_chk = f"entrada_comision_chk_precio_ef_{inv_id}"
+    _k_com_chk_ant = f"entrada_comision_base_ef_{inv_id}"
     k_edit = f"entrada_oferta_edit_id_{inv_id}"
 
     precio_ficha = float(inv.get("importe", 0) or 0)
@@ -2549,6 +2548,7 @@ def _tab_entrada_gastos_financiacion(usuario_id: int):
         k_pct,
         k_com_pct,
         k_com_chk,
+        _k_com_chk_ant,
         k_nombre,
         k_notas,
         k_estado,
@@ -2625,7 +2625,10 @@ def _tab_entrada_gastos_financiacion(usuario_id: int):
             float(inv.get("comision_venta_pct", 0) or 0) if inv.get("inmobiliaria") else 0.0
         )
     if k_com_chk not in st.session_state:
-        st.session_state[k_com_chk] = False
+        if _k_com_chk_ant in st.session_state:
+            st.session_state[k_com_chk] = bool(st.session_state.pop(_k_com_chk_ant))
+        else:
+            st.session_state[k_com_chk] = False
 
     st.markdown("**Precio de compra** (por defecto el de la ficha; edítalo para otra oferta o contraoferta)")
     precio_compra = float(
@@ -2695,32 +2698,33 @@ def _tab_entrada_gastos_financiacion(usuario_id: int):
         )
     )
 
-    pct_comision_sim = float(inv.get("comision_venta_pct", 0) or 0) if inv.get("inmobiliaria") else 0.0
-    comision_sobre_mas_prov = False
-    if inv.get("inmobiliaria"):
-        st.markdown(
-            '<span style="color:#991b1b;font-weight:600">Comisión inmobiliaria (simulación)</span>',
-            unsafe_allow_html=True,
+    comision_sobre_precio_mas_ef_compra = False
+    st.markdown(
+        '<span style="color:#991b1b;font-weight:600">Comisión de venta / inmobiliaria (simulación)</span>',
+        unsafe_allow_html=True,
+    )
+    pct_comision_sim = float(
+        st.number_input(
+            "% comisión (sobre precio o precio + efectivo compra; ver casilla debajo)",
+            min_value=0.0,
+            max_value=20.0,
+            step=0.5,
+            key=k_com_pct,
+            help="Se suma a **gastos de compra** como comisión. Por defecto: el % de la ficha si es inmobiliaria; en particular suele ser 0, "
+            "pero puedes subirlo si quieres simular honorarios. La casilla de abajo define la base del %.",
         )
-        pct_comision_sim = float(
-            st.number_input(
-                "% comisión inmobiliaria (editable; por defecto el de la ficha)",
-                min_value=0.0,
-                max_value=20.0,
-                step=0.5,
-                key=k_com_pct,
-                help="Solo si la venta es por inmobiliaria.",
-            )
+    )
+    comision_sobre_precio_mas_ef_compra = bool(
+        st.checkbox(
+            "Base del % de comisión: **precio de compra simulado + dinero en efectivo para la compra**",
+            key=k_com_chk,
+            help="Desmarcado: el % se aplica solo al precio de compra simulado de arriba. "
+            "Marcado: el % se aplica a (precio simulado + importe «Dinero en efectivo para la compra»). "
+            "No usa ningún otro importe de la simulación.",
         )
-        comision_sobre_mas_prov = bool(
-            st.checkbox(
-                "Calcular la comisión sobre **precio de compra + provisiones de fondos** (suma incluida en el sidebar)",
-                key=k_com_chk,
-                help="Si está desmarcado: % × precio. Si está marcado: % × (precio + suma de provisiones marcadas como incluir).",
-            )
-        )
-    else:
-        st.caption("Venta **particular** (sin inmobiliaria): comisión 0 € en este cálculo.")
+    )
+    if not inv.get("inmobiliaria") and pct_comision_sim <= 0:
+        st.caption("Ficha **particular**: el % suele ser 0; si subes el %, la comisión **sí entra** en la suma de gastos de compra.")
 
     st.markdown(
         '<p style="border-left:4px solid #15803d;padding:10px 14px;background:rgba(21,128,61,0.08);border-radius:8px;margin:16px 0 8px 0;">'
@@ -2745,7 +2749,7 @@ def _tab_entrada_gastos_financiacion(usuario_id: int):
         provisiones_total,
         pct_financiacion,
         pct_comision_inmobiliaria=pct_comision_sim,
-        comision_sobre_precio_mas_provisiones=comision_sobre_mas_prov,
+        comision_sobre_precio_mas_efectivo_compra=comision_sobre_precio_mas_ef_compra,
     )
     itp = tot["itp"]
     gastos_totales = tot["gastos_totales"]
@@ -2765,7 +2769,19 @@ def _tab_entrada_gastos_financiacion(usuario_id: int):
     with c_m3:
         st.metric("Total bruto (entrada + gastos)", f"{total_bruto:.0f} €")
     with c_m4:
-        st.metric("Neto a aportar (tras provisiones)", f"{total_entrada:.0f} €")
+        # Convención visual: sobra (total_entrada < 0 en contabilidad) → positivo y verde; falta → negativo y rojo
+        if total_entrada < 0:
+            color_neto, texto_neto = "#15803d", f"+{-total_entrada:.0f} €"
+        elif total_entrada > 0:
+            color_neto, texto_neto = "#b91c1c", f"-{total_entrada:.0f} €"
+        else:
+            color_neto, texto_neto = "#64748b", "0 €"
+        st.markdown(
+            f'<div><div style="font-size:0.875rem;color:rgba(49,51,63,0.6);margin-bottom:0.25rem;">'
+            f"Neto a aportar (tras provisiones)</div>"
+            f'<div style="font-size:1.5rem;font-weight:600;color:{color_neto};">{html.escape(texto_neto)}</div></div>',
+            unsafe_allow_html=True,
+        )
     st.caption(f"Hipoteca: {h.get('nombre_entidad','')} — {h.get('nombre_hipoteca','')}")
     st.markdown(
         f'<p style="margin:6px 0 0 0;"><span style="color:#15803d;font-weight:600">Provisiones incluidas:</span> '
@@ -2791,7 +2807,7 @@ def _tab_entrada_gastos_financiacion(usuario_id: int):
     )
     if comision_inmobiliaria_pct > 0:
         base_txt = (
-            f"precio ({precio_compra:.0f} €) + provisiones ({provisiones_total:.0f} €)"
+            f"precio ({precio_compra:.0f} €) + efectivo para la compra ({efectivo_para_compra:.0f} €)"
             if tot.get("comision_base_incluye_efectivo")
             else f"precio de compra ({precio_compra:.0f} €)"
         )
@@ -2802,8 +2818,13 @@ def _tab_entrada_gastos_financiacion(usuario_id: int):
     else:
         st.caption("Comisión inmobiliaria: 0 € (particular o sin comisión)")
     st.markdown(
-        f'<p style="color:#991b1b;margin:0.2em 0;">Suma gastos de compra (incl. efectivo para compra): <strong>{gastos_totales:.0f} €</strong></p>',
+        f'<p style="color:#991b1b;margin:0.2em 0;">Suma gastos de compra '
+        f"(I.T.P., notaría, registro, gestoría, <strong>comisión inmobiliaria</strong> si aplica, efectivo para compra): "
+        f"<strong>{gastos_totales:.0f} €</strong></p>",
         unsafe_allow_html=True,
+    )
+    st.caption(
+        f"Comprobación: {notaria:.0f} + {registro:.0f} + {gestoria:.0f} + {itp:.0f} + {comision_inmobiliaria:.0f} + {efectivo_para_compra:.0f} = {gastos_totales:.0f} €"
     )
 
     st.markdown(
@@ -2921,7 +2942,7 @@ def _tab_entrada_gastos_financiacion(usuario_id: int):
             provisiones_total,
             pct_financiacion,
             pct_comision_inmobiliaria=pct_comision_sim,
-            comision_sobre_precio_mas_provisiones=comision_sobre_mas_prov,
+            comision_sobre_precio_mas_efectivo_compra=comision_sobre_precio_mas_ef_compra,
         )
         now = datetime.now().isoformat(timespec="seconds")
         return {
@@ -3779,6 +3800,8 @@ def main():
         st.subheader("Changelog")
         st.markdown(f"**Versión actual: {VERSION_APP}**")
         st.markdown("""
+        - **1.19.4** — **Gastos de compra:** el % de comisión de la simulación **siempre** puede aplicarse (controles visibles aunque la ficha sea particular); se usa ese % en `gastos_totales`, así la suma incluye comisión cuando el porcentaje es mayor que cero. La línea de suma y la comprobación numérica listan I.T.P., tasas y comisión.
+        - **1.19.3** — **Comisión inmobiliaria:** si marcas la casilla extendida, el % se aplica sobre **precio de compra + dinero en efectivo para la compra** (ya no sobre precio + provisiones de fondos). Sigue guardándose en ofertas como `comision_base_incluye_efectivo` (ofertas viejas con la casilla activa usan este criterio al recargar).
         - **1.19.2** — **Provisiones de fondos:** los **perfiles** guardados en GitHub (antes «combinaciones») son escenarios distintos de importes + Incluir; **selector y edición** en el **sidebar**; la pestaña *Entrada y gastos* conserva actualizar / crear / eliminar perfil. Mismo JSON en `data/aportacion_efectivo/`.
         - **1.19.1** — **Entrada y gastos:** bloque «¿Cubren tus provisiones cada simulación?» (provisiones activas + combinación GitHub), barras de cobertura para lo que tienes en pantalla y **tabla + expander con barras** por cada oferta guardada (bruto de la simulación y gastos de compra frente a las mismas provisiones).
         - **1.19.0** — **Entrada y gastos:** separación **gastos** (bloque rojo: notaría, registro, gestoría, **dinero en efectivo para la compra**, ITP, comisión) vs **provisiones de fondos** (bloque verde: Magdalena, Javier, efectivo Marta, Alberto, Irene, efectivo Irene). El **neto a aportar** = entrada + gastos − provisiones incluidas. La comisión puede calcularse sobre precio o precio + provisiones. Tabla de ofertas: columnas **Efectivo compra** y **Provisiones**; `total_a_aportar` guardado es el neto.
