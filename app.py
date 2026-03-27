@@ -70,7 +70,7 @@ HELP_TAE = (
 APIFY_TOKEN_SECRET = "APIFY_TOKEN_SECRET"
 
 # Versión de la aplicación (visible en sidebar y changelog)
-VERSION_APP = "1.20.2"
+VERSION_APP = "1.20.4"
 
 # Gastos de compra (sobre precio de la vivienda / ITP)
 ITP_PCT = 7.0           # Impuesto de Transmisiones Patrimoniales: % sobre precio vivienda
@@ -2556,6 +2556,127 @@ def _opts_hipo_entrada_labels(hipotecas: list) -> list[str]:
     ]
 
 
+def _aplicar_payload_oferta_entrada_a_session(pend_oferta: dict, inv_id: int, inv: dict) -> None:
+    """Aplica datos de oferta a session_state. Debe ejecutarse antes de instanciar widgets con keys aport_* / entrada_*."""
+    k_precio = f"entrada_precio_{inv_id}"
+    k_not = f"entrada_notaria_{inv_id}"
+    k_reg = f"entrada_registro_{inv_id}"
+    k_ges = f"entrada_gestoria_{inv_id}"
+    k_ef_compra = f"entrada_efectivo_compra_{inv_id}"
+    k_pct = f"entrada_pct_fin_{inv_id}"
+    k_com_pct = f"entrada_comision_pct_{inv_id}"
+    k_com_chk = f"entrada_comision_chk_precio_ef_{inv_id}"
+    _k_com_chk_ant = f"entrada_comision_base_ef_{inv_id}"
+    k_edit = f"entrada_oferta_edit_id_{inv_id}"
+    k_nombre = f"entrada_nombre_oferta_{inv_id}"
+    k_notas = f"entrada_notas_oferta_{inv_id}"
+    k_estado = f"entrada_estado_oferta_{inv_id}"
+    _keys_oferta_widgets = (
+        k_precio,
+        k_not,
+        k_reg,
+        k_ges,
+        k_ef_compra,
+        k_pct,
+        k_com_pct,
+        k_com_chk,
+        _k_com_chk_ant,
+        k_nombre,
+        k_notas,
+        k_estado,
+        k_edit,
+    )
+    for _wk in _keys_oferta_widgets:
+        st.session_state.pop(_wk, None)
+    st.session_state[k_precio] = float(pend_oferta.get("precio_compra") or 0)
+    st.session_state[k_not] = float(pend_oferta.get("notaria", 1000) or 1000)
+    st.session_state[k_reg] = float(pend_oferta.get("registro", 600) or 600)
+    st.session_state[k_ges] = float(pend_oferta.get("gestoria", GESTORIA_EUR) or GESTORIA_EUR)
+    st.session_state[k_ef_compra] = float(pend_oferta.get("efectivo_para_compra", 0) or 0)
+    st.session_state[k_pct] = float(pend_oferta.get("pct_financiacion", 90) or 90)
+    ed = pend_oferta.get("efectivo_por_concepto")
+    ei = pend_oferta.get("efectivo_incluir_conceptos")
+    if ed and isinstance(ed, dict):
+        for k, _ in CONCEPTOS_EFECTIVO_APORTACION:
+            st.session_state[f"aport_imp_{k}"] = float(ed.get(k, 0) or 0)
+        leg_ed = float(ed.get("efectivo", 0) or 0)
+        if leg_ed:
+            st.session_state["aport_imp_efectivo_marta"] = float(
+                st.session_state.get("aport_imp_efectivo_marta", 0) or 0
+            ) + leg_ed
+    else:
+        total_old = float(pend_oferta.get("efectivo_adicional", 0) or 0)
+        for k, _ in CONCEPTOS_EFECTIVO_APORTACION:
+            st.session_state[f"aport_imp_{k}"] = 0.0
+        st.session_state["aport_imp_efectivo_marta"] = total_old
+    if ei and isinstance(ei, dict):
+        for k, _ in CONCEPTOS_EFECTIVO_APORTACION:
+            st.session_state[f"aport_inc_{k}"] = bool(ei.get(k, True))
+        if (
+            "efectivo" in ei
+            and "efectivo_marta" not in ei
+            and "efectivo_irene" not in ei
+        ):
+            ev = bool(ei["efectivo"])
+            st.session_state["aport_inc_efectivo_marta"] = ev
+            st.session_state["aport_inc_efectivo_irene"] = ev
+    else:
+        for k, _ in CONCEPTOS_EFECTIVO_APORTACION:
+            st.session_state[f"aport_inc_{k}"] = True
+    st.session_state[k_edit] = int(pend_oferta.get("id") or 0)
+    st.session_state[k_nombre] = pend_oferta.get("nombre") or ""
+    st.session_state[k_notas] = pend_oferta.get("notas") or ""
+    es = pend_oferta.get("estado") or "borrador"
+    _ev = [x[0] for x in ESTADOS_OFERTA_COMPRA]
+    st.session_state[k_estado] = _ev.index(es) if es in _ev else 0
+    st.session_state[k_com_pct] = float(
+        pend_oferta.get("comision_inmobiliaria_pct")
+        if pend_oferta.get("comision_inmobiliaria_pct") is not None
+        else (inv.get("comision_venta_pct", 0) or 0)
+    )
+    st.session_state[k_com_chk] = bool(pend_oferta.get("comision_base_incluye_efectivo", False))
+
+
+def _flush_pending_entrada_oferta_antes_sidebar(usuario_id: int) -> None:
+    """Consume _entrada_aplicar_oferta_* antes de los widgets del sidebar (aport_imp_*/aport_inc_*)."""
+    hipotecas = ghd.get_hipotecas(usuario_id)
+    if not hipotecas:
+        return
+    inmuebles = ghd.get_inmuebles(usuario_id)
+    if not inmuebles:
+        return
+    opts_inv_unique = [f"{_titulo_inmueble(inv)} (ID {inv.get('id')})" for inv in inmuebles]
+    sel_inv = st.session_state.get("entrada_sel_inv")
+    if sel_inv is None or sel_inv not in opts_inv_unique:
+        sel_inv = opts_inv_unique[0]
+    idx_inv = opts_inv_unique.index(sel_inv)
+    inv = inmuebles[idx_inv]
+    inv_id = int(inv.get("id") or 0)
+    pend = st.session_state.pop(f"_entrada_aplicar_oferta_{inv_id}", None)
+    if pend is None:
+        return
+    _aplicar_payload_oferta_entrada_a_session(pend, inv_id, inv)
+
+
+def _entrada_on_change_pick_oferta(usuario_id: int, inv_id: int) -> None:
+    """Al elegir una oferta en el desplegable, aplica el mismo flujo que «Cargar en la simulación»."""
+    ix = int(st.session_state.get(f"entrada_pick_idx_{inv_id}", -1))
+    if ix < 0:
+        return
+    ofertas_todas = ghd.get_ofertas_compra(usuario_id)
+    ofertas_inv = [o for o in ofertas_todas if int(o.get("inmueble_id") or 0) == inv_id]
+    ofertas_inv.sort(key=lambda x: x.get("fecha_actualizado") or x.get("fecha_creado") or "", reverse=True)
+    if ix >= len(ofertas_inv):
+        return
+    oc = ofertas_inv[ix]
+    st.session_state[f"_entrada_aplicar_oferta_{inv_id}"] = dict(oc)
+    oid_ap = int(oc.get("id") or 0)
+    if oid_ap:
+        st.session_state["_sidebar_entrada_oferta_aplicada_id"] = oid_ap
+        st.session_state["sidebar_entrada_oferta_id"] = oid_ap
+    st.rerun()
+
+
 def _aplicar_oferta_entrada_gastos_a_session(oferta: dict, inmuebles: list, hipotecas: list) -> bool:
     """Igual que «Cargar en la simulación» en la pestaña: selectores + payload para aplicar campos."""
     if not hipotecas:
@@ -2624,78 +2745,12 @@ def _tab_entrada_gastos_financiacion(usuario_id: int):
 
     precio_ficha = float(inv.get("importe", 0) or 0)
 
-    # Cargar oferta: el payload llega en el rerun siguiente. Hay que borrar las claves que ya usaron
-    # widgets en un run anterior; si no, Streamlit bloquea asignar a esas keys (StreamlitAPIException).
-    pend_oferta = st.session_state.pop(f"_entrada_aplicar_oferta_{inv_id}", None)
+    # Cargar oferta: `_entrada_aplicar_oferta_{id}` se aplica en main() con
+    # `_flush_pending_entrada_oferta_antes_sidebar` (antes del sidebar), porque `aport_imp_*`/`aport_inc_*`
+    # no pueden asignarse tras instanciar esos widgets.
     k_nombre = f"entrada_nombre_oferta_{inv_id}"
     k_notas = f"entrada_notas_oferta_{inv_id}"
     k_estado = f"entrada_estado_oferta_{inv_id}"
-    _keys_oferta_widgets = (
-        k_precio,
-        k_not,
-        k_reg,
-        k_ges,
-        k_ef_compra,
-        k_pct,
-        k_com_pct,
-        k_com_chk,
-        _k_com_chk_ant,
-        k_nombre,
-        k_notas,
-        k_estado,
-        k_edit,
-    )
-
-    if pend_oferta is not None:
-        for _wk in _keys_oferta_widgets:
-            st.session_state.pop(_wk, None)
-        st.session_state[k_precio] = float(pend_oferta.get("precio_compra") or 0)
-        st.session_state[k_not] = float(pend_oferta.get("notaria", 1000) or 1000)
-        st.session_state[k_reg] = float(pend_oferta.get("registro", 600) or 600)
-        st.session_state[k_ges] = float(pend_oferta.get("gestoria", 300) or 300)
-        st.session_state[k_ef_compra] = float(pend_oferta.get("efectivo_para_compra", 0) or 0)
-        st.session_state[k_pct] = float(pend_oferta.get("pct_financiacion", 90) or 90)
-        ed = pend_oferta.get("efectivo_por_concepto")
-        ei = pend_oferta.get("efectivo_incluir_conceptos")
-        if ed and isinstance(ed, dict):
-            for k, _ in CONCEPTOS_EFECTIVO_APORTACION:
-                st.session_state[f"aport_imp_{k}"] = float(ed.get(k, 0) or 0)
-            leg_ed = float(ed.get("efectivo", 0) or 0)
-            if leg_ed:
-                st.session_state["aport_imp_efectivo_marta"] = float(
-                    st.session_state.get("aport_imp_efectivo_marta", 0) or 0
-                ) + leg_ed
-        else:
-            total_old = float(pend_oferta.get("efectivo_adicional", 0) or 0)
-            for k, _ in CONCEPTOS_EFECTIVO_APORTACION:
-                st.session_state[f"aport_imp_{k}"] = 0.0
-            st.session_state["aport_imp_efectivo_marta"] = total_old
-        if ei and isinstance(ei, dict):
-            for k, _ in CONCEPTOS_EFECTIVO_APORTACION:
-                st.session_state[f"aport_inc_{k}"] = bool(ei.get(k, True))
-            if (
-                "efectivo" in ei
-                and "efectivo_marta" not in ei
-                and "efectivo_irene" not in ei
-            ):
-                ev = bool(ei["efectivo"])
-                st.session_state["aport_inc_efectivo_marta"] = ev
-                st.session_state["aport_inc_efectivo_irene"] = ev
-        else:
-            for k, _ in CONCEPTOS_EFECTIVO_APORTACION:
-                st.session_state[f"aport_inc_{k}"] = True
-        st.session_state[k_edit] = int(pend_oferta.get("id") or 0)
-        st.session_state[k_nombre] = pend_oferta.get("nombre") or ""
-        st.session_state[k_notas] = pend_oferta.get("notas") or ""
-        es = pend_oferta.get("estado") or "borrador"
-        _ev = [x[0] for x in ESTADOS_OFERTA_COMPRA]
-        st.session_state[k_estado] = _ev.index(es) if es in _ev else 0
-        st.session_state[k_com_pct] = float(
-            pend_oferta.get("comision_inmobiliaria_pct")
-            if pend_oferta.get("comision_inmobiliaria_pct") is not None
-            else (inv.get("comision_venta_pct", 0) or 0)
-        )
-        st.session_state[k_com_chk] = bool(pend_oferta.get("comision_base_incluye_efectivo", False))
 
     if k_precio not in st.session_state:
         st.session_state[k_precio] = max(precio_ficha, 0.0)
@@ -2704,7 +2759,7 @@ def _tab_entrada_gastos_financiacion(usuario_id: int):
     if k_reg not in st.session_state:
         st.session_state[k_reg] = 600.0
     if k_ges not in st.session_state:
-        st.session_state[k_ges] = 300.0
+        st.session_state[k_ges] = float(GESTORIA_EUR)
     if k_ef_compra not in st.session_state:
         st.session_state[k_ef_compra] = 0.0
     if k_pct not in st.session_state:
@@ -2720,6 +2775,126 @@ def _tab_entrada_gastos_financiacion(usuario_id: int):
             st.session_state[k_com_chk] = bool(st.session_state.pop(_k_com_chk_ant))
         else:
             st.session_state[k_com_chk] = False
+
+    st.subheader("Entrada y gastos para financiación")
+    st.caption(
+        "El **resumen** más abajo usa los valores del formulario **después de cada cambio**. "
+        "Gestoría y tasas van en **Parámetros**; las **ofertas guardadas** se cargan en el otro desplegable."
+    )
+    with st.expander("➕ ✏️ Parámetros de simulación (hipoteca, inmueble, precio y gastos)", expanded=False):
+        st.caption(
+            "Selecciona hipoteca e inmueble. El **precio de compra** sale por defecto de la ficha; "
+            "cámbialo para simular otras ofertas."
+        )
+        st.selectbox("Hipoteca", opts_hipo, key="entrada_sel_hipo")
+        st.selectbox("Inmueble (agenda)", opts_inv_unique, key="entrada_sel_inv")
+
+        st.markdown("**Precio de compra** (por defecto el de la ficha; edítalo para otra oferta o contraoferta)")
+        precio_compra = float(
+            st.number_input(
+                "Precio de compra (€)",
+                min_value=0.0,
+                step=5000.0,
+                key=k_precio,
+                help="Parte del precio publicado en la ficha; modifícalo para comparar ofertas o una contraoferta.",
+            )
+        )
+
+        pct_financiacion = float(
+            st.number_input(
+                "Porcentaje de financiación (sobre precio de compra)",
+                min_value=0.0,
+                max_value=100.0,
+                step=1.0,
+                format="%.1f",
+                key=k_pct,
+            )
+        )
+
+        st.markdown(
+            '<p style="border-left:4px solid #b91c1c;padding:10px 14px;background:rgba(185,28,28,0.08);border-radius:8px;margin:12px 0 8px 0;">'
+            '<strong style="color:#991b1b">Gastos de compra</strong> '
+            "<span style=\"color:#64748b\">— salidas: tasas, honorarios, comisión, efectivo para la compra…</span></p>",
+            unsafe_allow_html=True,
+        )
+        gc1, gc2 = st.columns(2)
+        with gc1:
+            notaria = float(
+                st.number_input(
+                    "Notaría",
+                    min_value=0.0,
+                    step=50.0,
+                    key=k_not,
+                )
+            )
+        with gc2:
+            registro = float(
+                st.number_input(
+                    "Registro",
+                    min_value=0.0,
+                    step=50.0,
+                    key=k_reg,
+                )
+            )
+        gestoria = float(
+            st.number_input(
+                "Gestoría",
+                min_value=0.0,
+                step=50.0,
+                key=k_ges,
+                help=f"Importe por defecto de la app: {GESTORIA_EUR:.0f} € (editable).",
+            )
+        )
+        st.caption(f"Gestoría: valor inicial **{GESTORIA_EUR:.0f} €** si no hay oferta guardada; edita arriba como el resto de gastos.")
+
+        efectivo_para_compra = float(
+            st.number_input(
+                "Dinero en efectivo para la compra (€)",
+                min_value=0.0,
+                step=100.0,
+                key=k_ef_compra,
+                help="Gasto en efectivo de la operación (p. ej. arras, pagos al vendedor fuera de hipoteca). "
+                "Las **provisiones de fondos** (bloque verde) son aparte y restan del total neto.",
+            )
+        )
+
+        st.markdown(
+            '<span style="color:#991b1b;font-weight:600">Comisión de venta / inmobiliaria (simulación)</span>',
+            unsafe_allow_html=True,
+        )
+        pct_comision_sim = float(
+            st.number_input(
+                "% comisión (sobre precio o precio + efectivo compra; ver casilla debajo)",
+                min_value=0.0,
+                max_value=20.0,
+                step=0.5,
+                key=k_com_pct,
+                help="Se suma a **gastos de compra** como comisión. Por defecto: el % de la ficha si es inmobiliaria; en particular suele ser 0, "
+                "pero puedes subirlo si quieres simular honorarios. La casilla de abajo define la base del %.",
+            )
+        )
+        comision_sobre_precio_mas_ef_compra = bool(
+            st.checkbox(
+                "Base del % de comisión: **precio de compra simulado + dinero en efectivo para la compra**",
+                key=k_com_chk,
+                help="Desmarcado: el % se aplica solo al precio de compra simulado de arriba. "
+                "Marcado: el % se aplica a (precio simulado + importe «Dinero en efectivo para la compra»). "
+                "No usa ningún otro importe de la simulación.",
+            )
+        )
+        if not inv.get("inmobiliaria") and pct_comision_sim <= 0:
+            st.caption("Ficha **particular**: el % suele ser 0; si subes el %, la comisión **sí entra** en la suma de gastos de compra.")
+
+        st.markdown(
+            '<p style="border-left:4px solid #15803d;padding:10px 14px;background:rgba(21,128,61,0.08);border-radius:8px;margin:16px 0 8px 0;">'
+            '<strong style="color:#166534">Provisiones de fondos</strong> '
+            "<span style=\"color:#64748b\">— entran a favor y reducen el dinero neto que falta por aportar</span></p>",
+            unsafe_allow_html=True,
+        )
+        st.caption(
+            "Los **importes** y las casillas **Incluir** están en el **sidebar** (desplegable *Provisiones de fondos*). "
+            "Cada **perfil** guardado en GitHub conserva esos valores; cambia de perfil en el sidebar para comparar escenarios."
+        )
 
     precio_compra = float(st.session_state[k_precio])
     pct_financiacion = float(st.session_state[k_pct])
@@ -2923,121 +3098,6 @@ def _tab_entrada_gastos_financiacion(usuario_id: int):
 
     if precio_compra <= 0:
         st.warning("Indica un **precio de compra** mayor que 0 para que los totales tengan sentido.")
-
-    st.markdown("---")
-    st.subheader("Entrada y gastos para financiación")
-    st.caption(
-        "Selecciona hipoteca e inmueble. El **precio de compra** sale por defecto de la ficha; "
-        "cámbialo para simular otras ofertas. Puedes **guardar** cada escenario con su **estado** de seguimiento."
-    )
-    st.selectbox("Hipoteca", opts_hipo, key="entrada_sel_hipo")
-    st.selectbox("Inmueble (agenda)", opts_inv_unique, key="entrada_sel_inv")
-
-    st.markdown("**Precio de compra** (por defecto el de la ficha; edítalo para otra oferta o contraoferta)")
-    precio_compra = float(
-        st.number_input(
-            "Precio de compra (€)",
-            min_value=0.0,
-            step=5000.0,
-            key=k_precio,
-            help="Parte del precio publicado en la ficha; modifícalo para comparar ofertas o una contraoferta.",
-        )
-    )
-
-    pct_financiacion = float(
-        st.number_input(
-            "Porcentaje de financiación (sobre precio de compra)",
-            min_value=0.0,
-            max_value=100.0,
-            step=1.0,
-            format="%.1f",
-            key=k_pct,
-        )
-    )
-
-    st.markdown(
-        '<p style="border-left:4px solid #b91c1c;padding:10px 14px;background:rgba(185,28,28,0.08);border-radius:8px;margin:12px 0 8px 0;">'
-        '<strong style="color:#991b1b">Gastos de compra</strong> '
-        "<span style=\"color:#64748b\">— salidas: tasas, honorarios, comisión, efectivo para la compra…</span></p>",
-        unsafe_allow_html=True,
-    )
-    gc1, gc2, gc3 = st.columns(3)
-    with gc1:
-        notaria = float(
-            st.number_input(
-                "Notaría",
-                min_value=0.0,
-                step=50.0,
-                key=k_not,
-            )
-        )
-    with gc2:
-        registro = float(
-            st.number_input(
-                "Registro",
-                min_value=0.0,
-                step=50.0,
-                key=k_reg,
-            )
-        )
-    with gc3:
-        gestoria = float(
-            st.number_input(
-                "Gestoría",
-                min_value=0.0,
-                step=50.0,
-                key=k_ges,
-            )
-        )
-
-    efectivo_para_compra = float(
-        st.number_input(
-            "Dinero en efectivo para la compra (€)",
-            min_value=0.0,
-            step=100.0,
-            key=k_ef_compra,
-            help="Gasto en efectivo de la operación (p. ej. arras, pagos al vendedor fuera de hipoteca). "
-            "Las **provisiones de fondos** (bloque verde) son aparte y restan del total neto.",
-        )
-    )
-
-    st.markdown(
-        '<span style="color:#991b1b;font-weight:600">Comisión de venta / inmobiliaria (simulación)</span>',
-        unsafe_allow_html=True,
-    )
-    pct_comision_sim = float(
-        st.number_input(
-            "% comisión (sobre precio o precio + efectivo compra; ver casilla debajo)",
-            min_value=0.0,
-            max_value=20.0,
-            step=0.5,
-            key=k_com_pct,
-            help="Se suma a **gastos de compra** como comisión. Por defecto: el % de la ficha si es inmobiliaria; en particular suele ser 0, "
-            "pero puedes subirlo si quieres simular honorarios. La casilla de abajo define la base del %.",
-        )
-    )
-    comision_sobre_precio_mas_ef_compra = bool(
-        st.checkbox(
-            "Base del % de comisión: **precio de compra simulado + dinero en efectivo para la compra**",
-            key=k_com_chk,
-            help="Desmarcado: el % se aplica solo al precio de compra simulado de arriba. "
-            "Marcado: el % se aplica a (precio simulado + importe «Dinero en efectivo para la compra»). "
-            "No usa ningún otro importe de la simulación.",
-        )
-    )
-    if not inv.get("inmobiliaria") and pct_comision_sim <= 0:
-        st.caption("Ficha **particular**: el % suele ser 0; si subes el %, la comisión **sí entra** en la suma de gastos de compra.")
-
-    st.markdown(
-        '<p style="border-left:4px solid #15803d;padding:10px 14px;background:rgba(21,128,61,0.08);border-radius:8px;margin:16px 0 8px 0;">'
-        '<strong style="color:#166534">Provisiones de fondos</strong> '
-        "<span style=\"color:#64748b\">— entran a favor y reducen el dinero neto que falta por aportar</span></p>",
-        unsafe_allow_html=True,
-    )
-    st.caption(
-        "Los **importes** y las casillas **Incluir** están en el **sidebar** (desplegable *Provisiones de fondos*). "
-        "Cada **perfil** guardado en GitHub conserva esos valores; cambia de perfil en el sidebar para comparar escenarios."
-    )
 
     st.markdown("---")
     st.markdown(
@@ -3326,15 +3386,23 @@ def _tab_entrada_gastos_financiacion(usuario_id: int):
                     f"{float(o.get('total_a_aportar') or 0):.0f} €"
                 )
     
+            def _on_pick_oferta_entrada() -> None:
+                _entrada_on_change_pick_oferta(usuario_id, inv_id)
+
             pick_ix = int(
                 st.selectbox(
                     "Seleccionar oferta guardada (este inmueble)",
                     opciones_pick,
                     format_func=_fmt_oferta_pick,
                     key=f"entrada_pick_idx_{inv_id}",
+                    on_change=_on_pick_oferta_entrada,
                 )
             )
-    
+            st.caption(
+                "Al **elegir** una fila del desplegable se cargan precio, gastos y provisiones en la simulación "
+                "y se actualiza el **resumen** de arriba (mismo efecto que «Cargar en la simulación»)."
+            )
+
         b1, b2 = st.columns(2)
         with b1:
             cargar = st.button("Cargar en la simulación", key=f"entrada_btn_cargar_{inv_id}")
@@ -3953,6 +4021,7 @@ def main():
     _sync_aportacion_usuario(u["id"])
     _init_aportacion_widgets_from_github(u["id"])
     _aport_flush_pending_combo_ix()
+    _flush_pending_entrada_oferta_antes_sidebar(u["id"])
 
     if "gps_destino" not in st.session_state:
         st.session_state.gps_destino = "Motril, Granada"
@@ -4155,6 +4224,8 @@ def main():
         st.subheader("Changelog")
         st.markdown(f"**Versión actual: {VERSION_APP}**")
         st.markdown("""
+        - **1.20.4** — **Entrada y gastos:** parámetros (precio, gastos, gestoría) dentro del expander ➕✏️; gestoría a ancho completo con ayuda al **importe por defecto** (`GESTORIA_EUR`). **Ofertas:** al seleccionar en el desplegable se aplica la oferta y se refresca el resumen (igual que «Cargar»).
+        - **1.20.3** — **Corrección Streamlit Cloud:** al cargar una oferta en «Entrada y gastos», los importes de provisiones se aplican en `main()` **antes** del sidebar (no en la pestaña), evitando `StreamlitAPIException` al asignar `aport_imp_*`/`aport_inc_*` cuando esos widgets ya existen.
         - **1.20.2** — **Entrada y gastos:** en el resumen, **indicadores visuales**: barras apiladas (financiación del precio; composición del bruto), **gráfico de barras** entrada vs gastos, barra **st.progress** de cobertura de provisiones frente al bruto, gráfica **tasación vs media del barrio** (o solo tasación si falta la media), bloque **Hipoteca y provisiones** con métricas.
         - **1.20.1** — **Sidebar:** expander **Oferta → Entrada y gastos** para elegir una oferta guardada en GitHub y cargar la simulación (misma lógica que «Cargar en la simulación» en la pestaña); el selector se sincroniza al cargar desde la pestaña y se resetea si eliminas esa oferta.
         - **1.20.0** — **UI Material 3:** formularios de alta en expanders **➕** (hipotecas, inmuebles, ofertas, perfiles de provisiones); edición en expanders **✏️**; **provisiones** en sidebar colapsadas por defecto; tarjetas de **conclusión** (comparador hipotecas, vivienda seleccionada, comparador inmuebles, amortizar/invertir, efecto amortización extra). Tema y CSS alineados con paleta tipo Android/Material 3.
