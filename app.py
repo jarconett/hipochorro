@@ -70,7 +70,7 @@ HELP_TAE = (
 APIFY_TOKEN_SECRET = "APIFY_TOKEN_SECRET"
 
 # Versión de la aplicación (visible bajo el título y en la pestaña Info; no en el pie del sidebar para no duplicar el branding de Streamlit Cloud)
-VERSION_APP = "1.20.7"
+VERSION_APP = "1.21.0"
 
 # Gastos de compra (sobre precio de la vivienda / ITP)
 ITP_PCT = 7.0           # Impuesto de Transmisiones Patrimoniales: % sobre precio vivienda
@@ -2374,7 +2374,7 @@ def _aport_clamp_combo_ix() -> None:
 
 
 def _aport_flush_pending_combo_ix() -> None:
-    """Aplica el índice de perfil pendiente antes del `selectbox` de perfiles en la pestaña.
+    """Aplica el índice de perfil pendiente antes del `selectbox` de perfiles (sidebar).
 
     Streamlit no permite asignar a la key de un widget después de instanciarlo;
     al crear o eliminar un perfil se deja el índice en `_aport_pending_combo_ix` y se consume aquí.
@@ -2384,6 +2384,30 @@ def _aport_flush_pending_combo_ix() -> None:
     v = int(st.session_state.pop("_aport_pending_combo_ix"))
     st.session_state["aport_combo_ix"] = v
     st.session_state["_aport_applied_combo_ix"] = v
+
+
+def _aport_sidebar_selector_perfil(usuario_id: int) -> None:
+    """Selector de perfil de provisiones en el sidebar (misma key que antes en pestaña; sin duplicar)."""
+    combo_list = st.session_state.get("_aport_combinaciones") or []
+    if not combo_list:
+        st.sidebar.caption("Sin perfiles; crea uno en *Entrada y gastos*.")
+        return
+    _aport_clamp_combo_ix()
+    st.sidebar.selectbox(
+        "Perfil provisiones (simulaciones)",
+        list(range(len(combo_list))),
+        format_func=lambda i: combo_list[i]["nombre"],
+        key="aport_combo_ix",
+        help="Carga importes e «Incluir» en la simulación y marca en GitHub el perfil activo.",
+    )
+    ix_cur = int(st.session_state.get("aport_combo_ix", 0) or 0)
+    last_ap = st.session_state.get("_aport_applied_combo_ix", -999)
+    if ix_cur != last_ap:
+        st.session_state["aport_activa_id"] = int(combo_list[ix_cur]["id"])
+        _aport_aplicar_combo_a_session(combo_list[ix_cur])
+        st.session_state["_aport_applied_combo_ix"] = ix_cur
+        ghd.guardar_aportacion_efectivo(usuario_id, _aport_doc_para_persist())
+        st.rerun()
 
 
 def _ui_aportacion_fondos_entrada_tab(usuario_id: int) -> None:
@@ -2400,27 +2424,10 @@ def _ui_aportacion_fondos_entrada_tab(usuario_id: int) -> None:
         )
         st.caption(
             f"Perfil activo: **{nom_activa}** · {len(combo_list)} perfil(es). "
-            "Cambia de perfil para cargar otro escenario; edita importes y **Incluir**; "
+            "El **selector de perfil** está en el **sidebar**; aquí editas importes y **Incluir**; "
             "**Guardar cambios** actualiza el perfil activo en GitHub y **Guardar como nuevo perfil** crea otro."
         )
-        if combo_list:
-            _aport_clamp_combo_ix()
-            st.selectbox(
-                "Perfil (escenarios en GitHub)",
-                list(range(len(combo_list))),
-                format_func=lambda i: combo_list[i]["nombre"],
-                key="aport_combo_ix",
-                help="Al cambiar, se cargan esos importes y se marca en GitHub cuál está activo.",
-            )
-            ix_cur = int(st.session_state.get("aport_combo_ix", 0) or 0)
-            last_ap = st.session_state.get("_aport_applied_combo_ix", -999)
-            if ix_cur != last_ap:
-                st.session_state["aport_activa_id"] = int(combo_list[ix_cur]["id"])
-                _aport_aplicar_combo_a_session(combo_list[ix_cur])
-                st.session_state["_aport_applied_combo_ix"] = ix_cur
-                ghd.guardar_aportacion_efectivo(usuario_id, _aport_doc_para_persist())
-                st.rerun()
-        else:
+        if not combo_list:
             st.caption("Sin perfiles; recarga la página tras iniciar sesión.")
 
         for k_ap, lbl_ap in PROVISIONES_FONDOS_CONCEPTOS:
@@ -2579,6 +2586,53 @@ def _totales_entrada_gastos(
     }
 
 
+HELP_ENTRADA_FINANCIACION = (
+    "Sobre el **precio de compra** simulado:\n\n"
+    "• **Con %** (ej. `90` o `90 %`): porcentaje que financia el banco.\n"
+    "• **Número negativo** (ej. `-261000`): capital **prestado** en euros (el − indica préstamo, no resta aritmética).\n"
+    "• **Número positivo** (ej. `29000`): **entrada** que aportas tú; lo financiado = precio − entrada."
+)
+
+
+def _parse_financiacion_entrada(raw: str, precio_compra: float) -> tuple[float, float, str]:
+    """
+    Devuelve (capital_financiado_eur, pct_sobre_precio_0_100, modo).
+    modo: 'pct' | 'prestamo' | 'entrada_eur' | 'cero' | 'error' | 'vacio'
+    """
+    s0 = (raw or "").strip()
+    if not s0:
+        return 0.0, 0.0, "vacio"
+    s = s0.replace(",", ".").replace(" ", "")
+    precio = max(0.0, float(precio_compra or 0))
+    if "%" in s0 or s.endswith("%"):
+        num_part = s.replace("%", "").strip()
+        try:
+            pct = float(num_part)
+        except (TypeError, ValueError):
+            return 0.0, 0.0, "error"
+        pct = max(0.0, min(100.0, pct))
+        fin = precio * pct / 100.0
+        return fin, pct, "pct"
+    try:
+        v = float(s)
+    except (TypeError, ValueError):
+        return 0.0, 0.0, "error"
+    if abs(v) < 1e-9:
+        return 0.0, 0.0, "cero"
+    if v < 0:
+        fin = abs(v)
+        if precio > 0:
+            fin = min(fin, precio)
+        pct_eq = 100.0 * fin / precio if precio > 0 else 0.0
+        return fin, pct_eq, "prestamo"
+    entrada = v
+    if precio > 0:
+        entrada = min(entrada, precio)
+    fin = max(0.0, precio - entrada)
+    pct_eq = 100.0 * fin / precio if precio > 0 else 0.0
+    return fin, pct_eq, "entrada_eur"
+
+
 def _bruto_necesario_oferta_guardada(o: dict) -> float:
     """Total bruto (entrada + gastos de compra) que implicaba la simulación al guardar la oferta."""
     if o.get("total_bruto_antes_provisiones") is not None:
@@ -2661,7 +2715,7 @@ def _aplicar_payload_oferta_entrada_a_session(pend_oferta: dict, inv_id: int, in
     k_reg = f"entrada_registro_{inv_id}"
     k_ges = f"entrada_gestoria_{inv_id}"
     k_ef_compra = f"entrada_efectivo_compra_{inv_id}"
-    k_pct = f"entrada_pct_fin_{inv_id}"
+    k_fin_txt = f"entrada_fin_espec_{inv_id}"
     k_com_pct = f"entrada_comision_pct_{inv_id}"
     k_com_chk = f"entrada_comision_chk_precio_ef_{inv_id}"
     _k_com_chk_ant = f"entrada_comision_base_ef_{inv_id}"
@@ -2675,7 +2729,7 @@ def _aplicar_payload_oferta_entrada_a_session(pend_oferta: dict, inv_id: int, in
         k_reg,
         k_ges,
         k_ef_compra,
-        k_pct,
+        k_fin_txt,
         k_com_pct,
         k_com_chk,
         _k_com_chk_ant,
@@ -2691,7 +2745,8 @@ def _aplicar_payload_oferta_entrada_a_session(pend_oferta: dict, inv_id: int, in
     st.session_state[k_reg] = float(pend_oferta.get("registro", 600) or 600)
     st.session_state[k_ges] = float(pend_oferta.get("gestoria", GESTORIA_EUR) or GESTORIA_EUR)
     st.session_state[k_ef_compra] = float(pend_oferta.get("efectivo_para_compra", 0) or 0)
-    st.session_state[k_pct] = float(pend_oferta.get("pct_financiacion", 90) or 90)
+    _pct_o = float(pend_oferta.get("pct_financiacion", 90) or 90)
+    st.session_state[k_fin_txt] = f"{_pct_o:g}%"
     ed = pend_oferta.get("efectivo_por_concepto")
     ei = pend_oferta.get("efectivo_incluir_conceptos")
     if ed and isinstance(ed, dict):
@@ -2835,7 +2890,8 @@ def _tab_entrada_gastos_financiacion(usuario_id: int):
     k_reg = f"entrada_registro_{inv_id}"
     k_ges = f"entrada_gestoria_{inv_id}"
     k_ef_compra = f"entrada_efectivo_compra_{inv_id}"
-    k_pct = f"entrada_pct_fin_{inv_id}"
+    k_fin_txt = f"entrada_fin_espec_{inv_id}"
+    legacy_pct_key = f"entrada_pct_fin_{inv_id}"
     k_com_pct = f"entrada_comision_pct_{inv_id}"
     k_com_chk = f"entrada_comision_chk_precio_ef_{inv_id}"
     _k_com_chk_ant = f"entrada_comision_base_ef_{inv_id}"
@@ -2860,8 +2916,16 @@ def _tab_entrada_gastos_financiacion(usuario_id: int):
         st.session_state[k_ges] = float(GESTORIA_EUR)
     if k_ef_compra not in st.session_state:
         st.session_state[k_ef_compra] = 0.0
-    if k_pct not in st.session_state:
-        st.session_state[k_pct] = 90.0
+    if k_fin_txt not in st.session_state:
+        if legacy_pct_key in st.session_state:
+            try:
+                _lp = float(st.session_state[legacy_pct_key])
+                st.session_state[k_fin_txt] = f"{_lp:g}%"
+            except (TypeError, ValueError):
+                st.session_state[k_fin_txt] = "90%"
+            st.session_state.pop(legacy_pct_key, None)
+        else:
+            st.session_state[k_fin_txt] = "90%"
     if k_edit not in st.session_state:
         st.session_state[k_edit] = None
     if k_com_pct not in st.session_state:
@@ -2876,8 +2940,8 @@ def _tab_entrada_gastos_financiacion(usuario_id: int):
 
     st.subheader("Entrada y gastos para financiación")
     st.caption(
-        "El **resumen** más abajo usa los valores del formulario **después de cada cambio**. "
-        "Gestoría y tasas van en **Parámetros**; las **ofertas guardadas** se cargan en el otro desplegable."
+        "El **resumen** usa los valores **después de cada cambio**. Orden: **Parámetros** (precio y financiación) → "
+        "**Provisiones** (perfil también en el **sidebar**) → resumen y cuadro de **amortización francesa** (30 años)."
     )
     with st.expander("➕ ✏️ Parámetros de simulación (hipoteca, inmueble, precio y gastos)", expanded=False):
         st.caption(
@@ -2898,16 +2962,26 @@ def _tab_entrada_gastos_financiacion(usuario_id: int):
             )
         )
 
-        pct_financiacion = float(
-            st.number_input(
-                "Porcentaje de financiación (sobre precio de compra)",
-                min_value=0.0,
-                max_value=100.0,
-                step=1.0,
-                format="%.1f",
-                key=k_pct,
-            )
+        st.text_input(
+            "Financiación / entrada (%, € prestados o € entrada)",
+            key=k_fin_txt,
+            help=HELP_ENTRADA_FINANCIACION,
+            placeholder="Ej: 90 %, -261000 o 29000",
         )
+        _pc_hint = float(st.session_state.get(k_precio, 0) or 0)
+        _raw_hint = str(st.session_state.get(k_fin_txt, "") or "").strip()
+        _fin_h, _pct_h, _mod_h = _parse_financiacion_entrada(_raw_hint, _pc_hint)
+        if _mod_h == "error":
+            st.caption("⚠ No se entiende el valor; usa **%**, un **negativo** (préstamo en €) o un **positivo** (entrada en €).")
+        elif _mod_h == "vacio":
+            st.caption("Sin valor: se usará **90 %** del precio al calcular.")
+        elif _pc_hint <= 0:
+            st.caption("Indica primero un **precio de compra** mayor que 0.")
+        else:
+            st.caption(
+                f"→ **{_fin_h:,.0f} €** financiados sobre precio (**{_pct_h:.2f} %**) · "
+                f"entrada sobre precio **{_pc_hint - _fin_h:,.0f} €**"
+            )
 
         st.markdown(
             '<p style="border-left:4px solid #b91c1c;padding:10px 14px;background:rgba(185,28,28,0.08);border-radius:8px;margin:12px 0 8px 0;">'
@@ -2986,7 +3060,14 @@ def _tab_entrada_gastos_financiacion(usuario_id: int):
     _ui_aportacion_fondos_entrada_tab(usuario_id)
 
     precio_compra = float(st.session_state[k_precio])
-    pct_financiacion = float(st.session_state[k_pct])
+    _raw_fin = str(st.session_state.get(k_fin_txt, "") or "").strip()
+    _, pct_financiacion, _mod_fin = _parse_financiacion_entrada(_raw_fin, precio_compra)
+    if _mod_fin in ("error", "vacio"):
+        pct_financiacion = 90.0 if precio_compra > 0 else 0.0
+        if _mod_fin == "error" and _raw_fin:
+            st.warning("Financiación: texto no reconocido; se aplica **90 %** del precio.")
+    elif _mod_fin == "cero":
+        pct_financiacion = 0.0
     notaria = float(st.session_state[k_not])
     registro = float(st.session_state[k_reg])
     gestoria = float(st.session_state[k_ges])
@@ -3188,6 +3269,29 @@ def _tab_entrada_gastos_financiacion(usuario_id: int):
     if precio_compra <= 0:
         st.warning("Indica un **precio de compra** mayor que 0 para que los totales tengan sentido.")
 
+    MESES_AMORT_ENTRADA = 360
+    with st.expander("Cuadro de amortización francesa (30 años / 360 cuotas)", expanded=False):
+        tin_am = float(h.get("tin", 0) or 0)
+        plazo_ficha = int(h.get("duracion_anos", 0) or 0)
+        if financiado <= 0:
+            st.caption("No hay **capital financiado**; ajusta precio y el campo de financiación/entrada.")
+        else:
+            st.caption(
+                f"Simulación con capital **{financiado:,.0f} €**, **TIN {tin_am:g} %** nominal anual, "
+                f"**{MESES_AMORT_ENTRADA}** mensualidades (cuota casi constante). "
+                f"Plazo del producto en la ficha de la hipoteca: **{plazo_ficha}** años (referencia contractual)."
+            )
+            filas_am = am.cuadro_mensual_frances(financiado, tin_am, MESES_AMORT_ENTRADA)
+            df_am = pd.DataFrame(filas_am)
+            st.dataframe(df_am, width="stretch", height=420)
+            st.download_button(
+                "Descargar CSV (360 filas)",
+                data=df_am.to_csv(index=False).encode("utf-8"),
+                file_name="amortizacion_francesa_30a_entrada_gastos.csv",
+                mime="text/csv",
+                key=f"dl_amort_entrada_{inv_id}",
+            )
+
     st.markdown("---")
     st.markdown(
         '<span style="color:#991b1b;font-weight:600">Desglose gastos (€)</span>',
@@ -3262,8 +3366,8 @@ def _tab_entrada_gastos_financiacion(usuario_id: int):
         '<div style="padding:12px 14px;background:rgba(21,128,61,0.1);border-radius:8px;border-left:4px solid #15803d;margin-bottom:12px;">'
         f'<strong style="color:#166534">Provisiones activas (ahora):</strong> '
         f'<span style="font-size:1.1em">{provisiones_total:,.0f} €</span><br/>'
-        f'<span style="color:#64748b;font-size:0.95em">Perfil «{html.escape(str(nom_combo_cov))}» en GitHub. '
-        "Con **Guardar cambios** en el desplegable **➕ ✏️ Provisiones de fondos** persistes los importes actuales.</span></div>",
+        f'<span style="color:#64748b;font-size:0.95em">Perfil «{html.escape(str(nom_combo_cov))}» (selector en **sidebar**). '
+        "**Guardar cambios** en **➕ ✏️ Provisiones de fondos** persiste importes en GitHub.</span></div>",
         unsafe_allow_html=True,
     )
     st.caption(
@@ -4079,9 +4183,11 @@ def main():
         "—",
     )
     tot_ap_hint, _ = _sum_efectivo_aportacion()
+    with st.sidebar.expander("Provisiones de fondos", expanded=False):
+        _aport_sidebar_selector_perfil(u["id"])
     st.sidebar.caption(
-        f"**Provisiones de fondos:** **{tot_ap_hint:.0f} €** incluidas · perfil «{nom_ap_hint}». "
-        "Edición en **Entrada y gastos** → **➕ ✏️ Provisiones de fondos**."
+        f"**Provisiones incluidas:** **{tot_ap_hint:.0f} €** · «{nom_ap_hint}». "
+        "Importes en **Entrada y gastos** → **➕ ✏️ Provisiones de fondos**."
     )
 
     # Selector de inmueble: Interesados (verde) primero, separador, En Estudio (azul)
@@ -4234,6 +4340,7 @@ def main():
         st.subheader("Changelog")
         st.markdown(f"**Versión actual: {VERSION_APP}**")
         st.markdown("""
+        - **1.21.0** — **Entrada y gastos:** campo **Financiación / entrada** como texto: `%` = % sobre precio; **negativo** = capital prestado (€); **positivo** = entrada (€); tooltip y leyenda. **Cuadro amortización francesa** 360 cuotas (30 años) con TIN de la hipoteca y capital financiado + CSV. **Sidebar:** selector de **perfil de provisiones** en expander (carga simulación en GitHub).
         - **1.20.7** — **Sidebar:** eliminado el pie «Hipochorro v…» que se **duplicaba** con el encabezado de la app en Streamlit Cloud. La **versión** queda bajo el título principal y en **Info**.
         - **1.20.6** — **Entrada y gastos:** un solo desplegable **➕ ✏️ Provisiones de fondos** (selector de perfil, importes, Incluir, **Guardar cambios**, **Guardar como nuevo perfil**, eliminar). Eliminada la duplicación con el sidebar (ahí solo resumen + enlace). Ofertas y barras de cobertura con título **➕ ✏️**. Orden: parámetros → provisiones → resumen.
         - **1.20.5** — **Desplegables alta/edición:** textos unificados **Guardar cambios** vs **Guardar como nuevo** (ofertas de compra, perfiles de provisiones en GitHub, alta hipoteca/inmueble). En ofertas, **Guardar cambios** a la izquierda (solo con oferta cargada/seleccionada).

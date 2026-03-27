@@ -158,3 +158,38 @@ def cuadro_amortizacion_anual(
             meses_restantes_programados = meses_para_saldar(capital, cuota_actual, i_mensual)
 
     return resultado
+
+
+def cuadro_mensual_frances(capital: float, tin_anual_pct: float, num_meses: int) -> List[dict]:
+    """
+    Sistema francés mes a mes: cuota (casi) constante, interés sobre saldo y amortización de capital.
+    Devuelve lista de dicts: mes, cuota, intereses, amort_capital, capital_pendiente.
+    """
+    capital = float(capital or 0)
+    num_meses = int(num_meses or 0)
+    if num_meses <= 0 or capital <= 0:
+        return []
+    tin = float(tin_anual_pct or 0)
+    cuota = cuota_mensual_frances(capital, tin, num_meses)
+    i_m = (tin / 100.0) / 12.0
+    saldo = capital
+    out: List[dict] = []
+    for mes in range(1, num_meses + 1):
+        interes = saldo * i_m
+        amort = cuota - interes
+        if amort > saldo:
+            amort = saldo
+        cuota_mes = amort + interes
+        saldo = max(0.0, saldo - amort)
+        out.append(
+            {
+                "mes": mes,
+                "cuota_€": round(cuota_mes, 2),
+                "intereses_€": round(interes, 2),
+                "amort_capital_€": round(amort, 2),
+                "capital_pendiente_€": round(saldo, 2),
+            }
+        )
+        if saldo <= 0.005:
+            break
+    return out
