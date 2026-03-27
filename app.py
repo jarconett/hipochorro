@@ -70,7 +70,7 @@ HELP_TAE = (
 APIFY_TOKEN_SECRET = "APIFY_TOKEN_SECRET"
 
 # Versión de la aplicación (visible en sidebar y changelog)
-VERSION_APP = "1.20.0"
+VERSION_APP = "1.20.2"
 
 # Gastos de compra (sobre precio de la vivienda / ITP)
 ITP_PCT = 7.0           # Impuesto de Transmisiones Patrimoniales: % sobre precio vivienda
@@ -2549,6 +2549,34 @@ def _render_bloque_cobertura(
         st.markdown(f'<p style="margin:4px 0 16px 0;color:{colg};font-weight:600">{msgg}</p>', unsafe_allow_html=True)
 
 
+def _opts_hipo_entrada_labels(hipotecas: list) -> list[str]:
+    return [
+        f"{h.get('nombre_entidad','')} — {h.get('nombre_hipoteca','')} (TIN {h.get('tin')}%)"
+        for h in hipotecas
+    ]
+
+
+def _aplicar_oferta_entrada_gastos_a_session(oferta: dict, inmuebles: list, hipotecas: list) -> bool:
+    """Igual que «Cargar en la simulación» en la pestaña: selectores + payload para aplicar campos."""
+    if not hipotecas:
+        return False
+    inv_id_o = int(oferta.get("inmueble_id") or 0)
+    inv_o = next((i for i in inmuebles if int(i.get("id") or 0) == inv_id_o), None)
+    if not inv_o:
+        return False
+    opts_hipo = _opts_hipo_entrada_labels(hipotecas)
+    hid = int(oferta.get("hipoteca_id") or 0)
+    h_o = next((h for h in hipotecas if int(h.get("id") or 0) == hid), None)
+    if h_o:
+        sel_h = f"{h_o.get('nombre_entidad','')} — {h_o.get('nombre_hipoteca','')} (TIN {h_o.get('tin')}%)"
+        st.session_state["entrada_sel_hipo"] = sel_h if sel_h in opts_hipo else opts_hipo[0]
+    else:
+        st.session_state["entrada_sel_hipo"] = opts_hipo[0]
+    st.session_state["entrada_sel_inv"] = f"{_titulo_inmueble(inv_o)} (ID {inv_o.get('id')})"
+    st.session_state[f"_entrada_aplicar_oferta_{inv_id_o}"] = dict(oferta)
+    return True
+
+
 def _tab_entrada_gastos_financiacion(usuario_id: int):
     """
     Pestaña: calcula la entrada necesaria para un % de financiación (por defecto 90%),
@@ -2564,24 +2592,21 @@ def _tab_entrada_gastos_financiacion(usuario_id: int):
         st.info("No hay inmuebles en la agenda. Ve a **Agenda inmuebles** para dar de alta viviendas.")
         return
 
-    st.subheader("Entrada y gastos para financiación")
-    st.caption(
-        "Selecciona hipoteca e inmueble. El **precio de compra** sale por defecto de la ficha; "
-        "cámbialo para simular otras ofertas. Puedes **guardar** cada escenario con su **estado** de seguimiento."
-    )
+    opts_hipo = _opts_hipo_entrada_labels(hipotecas)
+    opts_inv_unique = [f"{_titulo_inmueble(inv)} (ID {inv.get('id')})" for inv in inmuebles]
 
-    opts_hipo = [
-        f"{h.get('nombre_entidad','')} — {h.get('nombre_hipoteca','')} (TIN {h.get('tin')}%)"
-        for h in hipotecas
-    ]
-    sel_hipo = st.selectbox("Hipoteca", opts_hipo, key="entrada_sel_hipo")
-    idx_hipo = opts_hipo.index(sel_hipo) if sel_hipo in opts_hipo else 0
+    # Hipoteca / inmueble: la UI va debajo del resumen; aquí resolvemos desde session_state para calcular antes de pintar widgets.
+    sel_hipo = st.session_state.get("entrada_sel_hipo")
+    if sel_hipo is None or sel_hipo not in opts_hipo:
+        sel_hipo = opts_hipo[0]
+    idx_hipo = opts_hipo.index(sel_hipo)
     h = hipotecas[idx_hipo]
     hipoteca_id = int(h.get("id", 0) or 0)
 
-    opts_inv_unique = [f"{_titulo_inmueble(inv)} (ID {inv.get('id')})" for inv in inmuebles]
-    sel_inv = st.selectbox("Inmueble (agenda)", opts_inv_unique, key="entrada_sel_inv")
-    idx_inv = opts_inv_unique.index(sel_inv) if sel_inv in opts_inv_unique else 0
+    sel_inv = st.session_state.get("entrada_sel_inv")
+    if sel_inv is None or sel_inv not in opts_inv_unique:
+        sel_inv = opts_inv_unique[0]
+    idx_inv = opts_inv_unique.index(sel_inv)
     inv = inmuebles[idx_inv]
     inv_id = int(inv.get("id") or 0)
 
@@ -2696,6 +2721,218 @@ def _tab_entrada_gastos_financiacion(usuario_id: int):
         else:
             st.session_state[k_com_chk] = False
 
+    precio_compra = float(st.session_state[k_precio])
+    pct_financiacion = float(st.session_state[k_pct])
+    notaria = float(st.session_state[k_not])
+    registro = float(st.session_state[k_reg])
+    gestoria = float(st.session_state[k_ges])
+    efectivo_para_compra = float(st.session_state[k_ef_compra])
+    pct_comision_sim = float(st.session_state[k_com_pct])
+    comision_sobre_precio_mas_ef_compra = bool(st.session_state[k_com_chk])
+
+    provisiones_total, desglose_provisiones = _sum_efectivo_aportacion()
+
+    tot = _totales_entrada_gastos(
+        precio_compra,
+        inv,
+        notaria,
+        registro,
+        gestoria,
+        efectivo_para_compra,
+        provisiones_total,
+        pct_financiacion,
+        pct_comision_inmobiliaria=pct_comision_sim,
+        comision_sobre_precio_mas_efectivo_compra=comision_sobre_precio_mas_ef_compra,
+    )
+    itp = tot["itp"]
+    gastos_totales = tot["gastos_totales"]
+    entrada_compra = tot["entrada_compra"]
+    total_entrada = tot["total_a_aportar"]
+    total_bruto = tot["total_bruto_antes_provisiones"]
+    comision_inmobiliaria_pct = tot["comision_inmobiliaria_pct"]
+    comision_inmobiliaria = tot["comision_inmobiliaria"]
+    base_comision = tot["base_comision_inmobiliaria"]
+
+    st.markdown("---")
+    st.markdown("#### Resumen de la simulación")
+    c_m1, c_m2, c_m3, c_m4 = st.columns(4)
+    with c_m1:
+        st.metric("Entrada (parte compra)", f"{entrada_compra:.0f} €")
+    with c_m2:
+        st.metric("Total gastos compra", f"{gastos_totales:.0f} €")
+    with c_m3:
+        st.metric("Total bruto (entrada + gastos)", f"{total_bruto:.0f} €")
+    with c_m4:
+        # Convención visual: sobra (total_entrada < 0 en contabilidad) → positivo y verde; falta → negativo y rojo
+        if total_entrada < 0:
+            color_neto, texto_neto = "#15803d", f"+{-total_entrada:.0f} €"
+        elif total_entrada > 0:
+            color_neto, texto_neto = "#b91c1c", f"-{total_entrada:.0f} €"
+        else:
+            color_neto, texto_neto = "#64748b", "0 €"
+        st.markdown(
+            f'<div><div style="font-size:0.875rem;color:rgba(93,158,134,0.6);margin-bottom:0.25rem;">'
+            f"Neto a aportar (tras provisiones)</div>"
+            f'<div style="font-size:1.5rem;font-weight:600;color:{color_neto};">{html.escape(texto_neto)}</div></div>',
+            unsafe_allow_html=True,
+        )
+
+    st.markdown("##### Indicadores visuales")
+    financiado = float(tot.get("financiado", 0) or 0)
+
+    if precio_compra > 0:
+        st.caption("**Financiación del precio de compra** (parte bancaria vs tu entrada sobre el precio simulado)")
+        pct_banco = min(100.0, max(0.0, 100.0 * financiado / precio_compra))
+        pct_tu_precio = min(100.0, max(0.0, 100.0 * entrada_compra / precio_compra))
+        f_abs = max(financiado, 0.0)
+        e_abs = max(entrada_compra, 0.0)
+        st.markdown(
+            f'<div style="display:flex;height:30px;border-radius:14px;overflow:hidden;'
+            f'border:1px solid rgba(103,80,164,0.28);max-width:820px;box-shadow:0 1px 2px rgba(0,0,0,0.06);">'
+            f'<div style="flex:{f_abs:g};min-width:0;background:#625B71;display:flex;align-items:center;'
+            f'justify-content:center;color:#fff;font-size:0.72rem;font-weight:700;">Financiado ~{pct_banco:.0f}%</div>'
+            f'<div style="flex:{e_abs:g};min-width:0;background:#6750A4;display:flex;align-items:center;'
+            f'justify-content:center;color:#fff;font-size:0.72rem;font-weight:700;">Tu entrada ~{pct_tu_precio:.0f}%</div></div>',
+            unsafe_allow_html=True,
+        )
+        st.caption(f"{financiado:,.0f} € financiados · {entrada_compra:,.0f} € de tu bolsillo sobre precio · **{precio_compra:,.0f} €** precio")
+
+    if total_bruto > 0:
+        st.caption("**Composición del total bruto** (entrada de compra + gastos de compra antes de provisiones)")
+        pct_e_bruto = 100.0 * entrada_compra / total_bruto
+        pct_g_bruto = 100.0 * gastos_totales / total_bruto
+        ge = max(entrada_compra, 0.0)
+        gg = max(gastos_totales, 0.0)
+        col_b1, col_b2 = st.columns([1, 1])
+        with col_b1:
+            st.markdown(
+                f'<div style="display:flex;height:34px;border-radius:16px;overflow:hidden;'
+                f'border:1px solid rgba(179,38,30,0.25);max-width:820px;box-shadow:0 1px 2px rgba(0,0,0,0.06);">'
+                f'<div style="flex:{ge:g};min-width:0;background:#6750A4;display:flex;align-items:center;'
+                f'justify-content:center;color:#fff;font-size:0.75rem;font-weight:700;">Entrada {pct_e_bruto:.0f}%</div>'
+                f'<div style="flex:{gg:g};min-width:0;background:#B3261E;display:flex;align-items:center;'
+                f'justify-content:center;color:#fff;font-size:0.75rem;font-weight:700;">Gastos {pct_g_bruto:.0f}%</div></div>',
+                unsafe_allow_html=True,
+            )
+            st.caption(f"{entrada_compra:,.0f} € + {gastos_totales:,.0f} € = **{total_bruto:,.0f} €**")
+        with col_b2:
+            df_bruto = pd.DataFrame(
+                {"Importe (€)": [entrada_compra, gastos_totales]},
+                index=["Entrada (parte compra)", "Gastos de compra"],
+            )
+            st.bar_chart(df_bruto, height=210)
+
+        st.caption("**Provisiones frente al total bruto**")
+        cov_pb = min(1.0, provisiones_total / total_bruto)
+        st.progress(cov_pb)
+        if total_entrada < 0:
+            st.caption(
+                f"Con **{provisiones_total:,.0f} €** de provisiones cubres el **{cov_pb * 100:.0f}%** del bruto y **sobran {-total_entrada:,.0f} €** respecto a lo necesario."
+            )
+        elif total_entrada > 0:
+            st.caption(
+                f"Con **{provisiones_total:,.0f} €** cubres el **{cov_pb * 100:.0f}%** del bruto; **falta aportar {total_entrada:,.0f} €**."
+            )
+        else:
+            st.caption(
+                f"Las provisiones (**{provisiones_total:,.0f} €**) igualan exactamente el total bruto (**{total_bruto:,.0f} €**)."
+            )
+
+    valor_medio_barrio = float(inv.get("valor_medio_barrio", 0) or 0)
+    tasacion_objetivo = (
+        (precio_compra / PRECIO_COMPRA_FRACCION_TASACION) if precio_compra > 0 else 0.0
+    )
+    col_tas_l, col_tas_r = st.columns(2)
+    with col_tas_l:
+        st.markdown(
+            '<div style="font-size:0.875rem;color:rgba(93,158,134,0.6);margin-bottom:0.25rem;">'
+            "Tasación objetivo (si el banco exige que el precio sea el <strong>80%</strong> de la tasación)</div>",
+            unsafe_allow_html=True,
+        )
+        if precio_compra <= 0:
+            t_txt, t_col = "—", "#64748b"
+        elif valor_medio_barrio <= 0:
+            t_txt, t_col = f"{tasacion_objetivo:.0f} €", "#64748b"
+        elif tasacion_objetivo > valor_medio_barrio:
+            t_txt, t_col = f"-{tasacion_objetivo:.0f} €", "#b91c1c"
+        elif tasacion_objetivo < valor_medio_barrio:
+            t_txt, t_col = f"{tasacion_objetivo:.0f} €", "#15803d"
+        else:
+            t_txt, t_col = f"{tasacion_objetivo:.0f} €", "#64748b"
+        st.markdown(
+            f'<div style="font-size:1.35rem;font-weight:600;color:{t_col};">{html.escape(t_txt)}</div>',
+            unsafe_allow_html=True,
+        )
+        st.caption(
+            f"Orientativo: precio de compra simulado ÷ {PRECIO_COMPRA_FRACCION_TASACION:.2f} "
+            f"({PRECIO_COMPRA_FRACCION_TASACION:.0%} del valor de tasación)."
+        )
+    with col_tas_r:
+        st.markdown(
+            '<div style="font-size:0.875rem;color:rgba(49,51,63,0.6);margin-bottom:0.25rem;">'
+            "Valor medio viviendas del barrio (€) — ficha del inmueble</div>",
+            unsafe_allow_html=True,
+        )
+        if valor_medio_barrio > 0:
+            st.markdown(
+                f'<div style="font-size:1.35rem;font-weight:600;color:rgba(93,158,134,0.6);">{html.escape(f"{valor_medio_barrio:.0f} €")}</div>',
+                unsafe_allow_html=True,
+            )
+        else:
+            st.markdown(
+                '<div style="font-size:1rem;color:#94a3b8;">— (sin dato en ficha)</div>',
+                unsafe_allow_html=True,
+            )
+    if precio_compra > 0 and valor_medio_barrio <= 0:
+        st.caption("Rellena **Valor medio viviendas del barrio** en la ficha del inmueble para ver verde/rojo según la comparación con la tasación objetivo.")
+    elif precio_compra > 0 and valor_medio_barrio > 0:
+        if tasacion_objetivo > valor_medio_barrio:
+            st.caption(
+                "La tasación orientativa supera la **media del barrio** de la ficha (contexto más exigente para la valoración)."
+            )
+        elif tasacion_objetivo < valor_medio_barrio:
+            st.caption("La tasación orientativa queda **por debajo** de la media del barrio indicada en la ficha.")
+
+    if precio_compra > 0 and tasacion_objetivo > 0 and valor_medio_barrio > 0:
+        st.caption("**Comparativa visual: tasación orientativa vs media del barrio**")
+        df_tas = pd.DataFrame(
+            {"Importe (€)": [tasacion_objetivo, valor_medio_barrio]},
+            index=["Tasación orientativa", "Media barrio (ficha)"],
+        )
+        st.bar_chart(df_tas, height=240)
+    elif precio_compra > 0 and tasacion_objetivo > 0 and valor_medio_barrio <= 0:
+        st.caption("**Tasación orientativa** (sin comparativa: falta media del barrio en la ficha)")
+        st.bar_chart(
+            pd.DataFrame({"Importe (€)": [tasacion_objetivo]}, index=["Tasación orientativa"]),
+            height=180,
+        )
+
+    st.markdown("##### Hipoteca y provisiones")
+    c_hip, c_prov = st.columns(2)
+    with c_hip:
+        ne = (h.get("nombre_entidad") or "").strip() or "—"
+        st.metric("Entidad", (ne[:28] + "…") if len(ne) > 28 else ne)
+        st.caption(f"**Producto:** {h.get('nombre_hipoteca', '—')}")
+    with c_prov:
+        st.metric("Provisiones incluidas (activas)", f"{provisiones_total:,.0f} €")
+        if total_bruto > 0:
+            rel_p = min(100.0, 100.0 * provisiones_total / total_bruto)
+            st.caption(f"Representan **{rel_p:.0f}%** del total bruto ({total_bruto:,.0f} €).")
+        else:
+            st.caption("Se aplican al cálculo del neto cuando el bruto es mayor que cero.")
+
+    if precio_compra <= 0:
+        st.warning("Indica un **precio de compra** mayor que 0 para que los totales tengan sentido.")
+
+    st.markdown("---")
+    st.subheader("Entrada y gastos para financiación")
+    st.caption(
+        "Selecciona hipoteca e inmueble. El **precio de compra** sale por defecto de la ficha; "
+        "cámbialo para simular otras ofertas. Puedes **guardar** cada escenario con su **estado** de seguimiento."
+    )
+    st.selectbox("Hipoteca", opts_hipo, key="entrada_sel_hipo")
+    st.selectbox("Inmueble (agenda)", opts_inv_unique, key="entrada_sel_inv")
+
     st.markdown("**Precio de compra** (por defecto el de la ficha; edítalo para otra oferta o contraoferta)")
     precio_compra = float(
         st.number_input(
@@ -2764,7 +3001,6 @@ def _tab_entrada_gastos_financiacion(usuario_id: int):
         )
     )
 
-    comision_sobre_precio_mas_ef_compra = False
     st.markdown(
         '<span style="color:#991b1b;font-weight:600">Comisión de venta / inmobiliaria (simulación)</span>',
         unsafe_allow_html=True,
@@ -2802,117 +3038,6 @@ def _tab_entrada_gastos_financiacion(usuario_id: int):
         "Los **importes** y las casillas **Incluir** están en el **sidebar** (desplegable *Provisiones de fondos*). "
         "Cada **perfil** guardado en GitHub conserva esos valores; cambia de perfil en el sidebar para comparar escenarios."
     )
-
-    provisiones_total, desglose_provisiones = _sum_efectivo_aportacion()
-
-    tot = _totales_entrada_gastos(
-        precio_compra,
-        inv,
-        notaria,
-        registro,
-        gestoria,
-        efectivo_para_compra,
-        provisiones_total,
-        pct_financiacion,
-        pct_comision_inmobiliaria=pct_comision_sim,
-        comision_sobre_precio_mas_efectivo_compra=comision_sobre_precio_mas_ef_compra,
-    )
-    itp = tot["itp"]
-    gastos_totales = tot["gastos_totales"]
-    entrada_compra = tot["entrada_compra"]
-    total_entrada = tot["total_a_aportar"]
-    total_bruto = tot["total_bruto_antes_provisiones"]
-    comision_inmobiliaria_pct = tot["comision_inmobiliaria_pct"]
-    comision_inmobiliaria = tot["comision_inmobiliaria"]
-    base_comision = tot["base_comision_inmobiliaria"]
-
-    st.markdown("---")
-    c_m1, c_m2, c_m3, c_m4 = st.columns(4)
-    with c_m1:
-        st.metric("Entrada (parte compra)", f"{entrada_compra:.0f} €")
-    with c_m2:
-        st.metric("Total gastos compra", f"{gastos_totales:.0f} €")
-    with c_m3:
-        st.metric("Total bruto (entrada + gastos)", f"{total_bruto:.0f} €")
-    with c_m4:
-        # Convención visual: sobra (total_entrada < 0 en contabilidad) → positivo y verde; falta → negativo y rojo
-        if total_entrada < 0:
-            color_neto, texto_neto = "#15803d", f"+{-total_entrada:.0f} €"
-        elif total_entrada > 0:
-            color_neto, texto_neto = "#b91c1c", f"-{total_entrada:.0f} €"
-        else:
-            color_neto, texto_neto = "#64748b", "0 €"
-        st.markdown(
-            f'<div><div style="font-size:0.875rem;color:rgba(93,158,134,0.6);margin-bottom:0.25rem;">'
-            f"Neto a aportar (tras provisiones)</div>"
-            f'<div style="font-size:1.5rem;font-weight:600;color:{color_neto};">{html.escape(texto_neto)}</div></div>',
-            unsafe_allow_html=True,
-        )
-
-    valor_medio_barrio = float(inv.get("valor_medio_barrio", 0) or 0)
-    tasacion_objetivo = (
-        (precio_compra / PRECIO_COMPRA_FRACCION_TASACION) if precio_compra > 0 else 0.0
-    )
-    col_tas_l, col_tas_r = st.columns(2)
-    with col_tas_l:
-        st.markdown(
-            '<div style="font-size:0.875rem;color:rgba(93,158,134,0.6);margin-bottom:0.25rem;">'
-            "Tasación objetivo (si el banco exige que el precio sea el <strong>80%</strong> de la tasación)</div>",
-            unsafe_allow_html=True,
-        )
-        if precio_compra <= 0:
-            t_txt, t_col = "—", "#64748b"
-        elif valor_medio_barrio <= 0:
-            t_txt, t_col = f"{tasacion_objetivo:.0f} €", "#64748b"
-        elif tasacion_objetivo > valor_medio_barrio:
-            t_txt, t_col = f"-{tasacion_objetivo:.0f} €", "#b91c1c"
-        elif tasacion_objetivo < valor_medio_barrio:
-            t_txt, t_col = f"{tasacion_objetivo:.0f} €", "#15803d"
-        else:
-            t_txt, t_col = f"{tasacion_objetivo:.0f} €", "#64748b"
-        st.markdown(
-            f'<div style="font-size:1.35rem;font-weight:600;color:{t_col};">{html.escape(t_txt)}</div>',
-            unsafe_allow_html=True,
-        )
-        st.caption(
-            f"Orientativo: precio de compra simulado ÷ {PRECIO_COMPRA_FRACCION_TASACION:.2f} "
-            f"({PRECIO_COMPRA_FRACCION_TASACION:.0%} del valor de tasación)."
-        )
-    with col_tas_r:
-        st.markdown(
-            '<div style="font-size:0.875rem;color:rgba(49,51,63,0.6);margin-bottom:0.25rem;">'
-            "Valor medio viviendas del barrio (€) — ficha del inmueble</div>",
-            unsafe_allow_html=True,
-        )
-        if valor_medio_barrio > 0:
-            st.markdown(
-                f'<div style="font-size:1.35rem;font-weight:600;color:rgba(93,158,134,0.6);">{html.escape(f"{valor_medio_barrio:.0f} €")}</div>',
-                unsafe_allow_html=True,
-            )
-        else:
-            st.markdown(
-                '<div style="font-size:1rem;color:#94a3b8;">— (sin dato en ficha)</div>',
-                unsafe_allow_html=True,
-            )
-    if precio_compra > 0 and valor_medio_barrio <= 0:
-        st.caption("Rellena **Valor medio viviendas del barrio** en la ficha del inmueble para ver verde/rojo según la comparación con la tasación objetivo.")
-    elif precio_compra > 0 and valor_medio_barrio > 0:
-        if tasacion_objetivo > valor_medio_barrio:
-            st.caption(
-                "La tasación orientativa supera la **media del barrio** de la ficha (contexto más exigente para la valoración)."
-            )
-        elif tasacion_objetivo < valor_medio_barrio:
-            st.caption("La tasación orientativa queda **por debajo** de la media del barrio indicada en la ficha.")
-
-    st.caption(f"Hipoteca: {h.get('nombre_entidad','')} — {h.get('nombre_hipoteca','')}")
-    st.markdown(
-        f'<p style="margin:6px 0 0 0;"><span style="color:#15803d;font-weight:600">Provisiones incluidas:</span> '
-        f"{provisiones_total:.0f} €</p>",
-        unsafe_allow_html=True,
-    )
-
-    if precio_compra <= 0:
-        st.warning("Indica un **precio de compra** mayor que 0 para que los totales tengan sentido.")
 
     st.markdown("---")
     st.markdown(
@@ -2996,7 +3121,7 @@ def _tab_entrada_gastos_financiacion(usuario_id: int):
         "Se usan las **mismas provisiones** para todas las filas: las que tienes cargadas ahora. "
         "Se compara con el **bruto** de cada simulación (entrada + gastos al guardar) y con los **gastos de compra** solos."
     )
-    _render_bloque_cobertura("Simulación actual (valores de arriba en pantalla)", total_bruto, gastos_totales, provisiones_total)
+    _render_bloque_cobertura("Simulación actual (mismo criterio que el resumen superior)", total_bruto, gastos_totales, provisiones_total)
 
     if ofertas_tabla:
         st.markdown("**Resumen: provisiones actuales vs cada oferta guardada**")
@@ -3035,7 +3160,7 @@ def _tab_entrada_gastos_financiacion(usuario_id: int):
     st.markdown("---")
     with st.expander("➕ Ofertas de compra y seguimiento", expanded=False):
         st.caption(
-            "Pon nombre y estado y pulsa **Guardar oferta**. **Contraoferta:** cambia el precio arriba y guarda de nuevo "
+            "Pon nombre y estado y pulsa **Guardar oferta**. **Contraoferta:** ajusta el precio en el formulario (debajo del resumen) y guarda de nuevo "
             "o usa **Actualizar** si cargaste una oferta. Requiere `GITHUB_TOKEN` para persistir en el repo."
         )
     
@@ -3104,7 +3229,7 @@ def _tab_entrada_gastos_financiacion(usuario_id: int):
             btn_guardar = st.button(
                 "💾 Guardar oferta",
                 key=f"entrada_guardar_nueva_{inv_id}",
-                help="Crea un nuevo registro en GitHub con la simulación actual (nombre y estado de arriba).",
+                help="Crea un nuevo registro en GitHub con la simulación actual (nombre y estado en este bloque).",
             )
         with gsave2:
             edit_id_btn = st.session_state.get(k_edit)
@@ -3222,6 +3347,10 @@ def _tab_entrada_gastos_financiacion(usuario_id: int):
             else:
                 oc = ofertas_inv[pick_ix]
                 st.session_state[f"_entrada_aplicar_oferta_{inv_id}"] = dict(oc)
+                oid_ap = int(oc.get("id") or 0)
+                if oid_ap:
+                    st.session_state["_sidebar_entrada_oferta_aplicada_id"] = oid_ap
+                    st.session_state["sidebar_entrada_oferta_id"] = oid_ap
                 st.rerun()
     
         if borrar:
@@ -3232,6 +3361,9 @@ def _tab_entrada_gastos_financiacion(usuario_id: int):
                 oid_del = int(oc.get("id") or 0)
                 if oid_del and ghd.eliminar_oferta_compra(usuario_id, oid_del):
                     st.session_state.pop(k_edit, None)
+                    if int(st.session_state.get("_sidebar_entrada_oferta_aplicada_id") or 0) == oid_del:
+                        st.session_state["_sidebar_entrada_oferta_aplicada_id"] = None
+                        st.session_state["sidebar_entrada_oferta_id"] = -1
                     st.success("Oferta eliminada.")
                     st.rerun()
                 else:
@@ -3814,6 +3946,8 @@ def main():
     if st.sidebar.button("Cerrar sesión"):
         st.session_state.usuario_actual = None
         st.session_state.inmueble_seleccionado = None
+        st.session_state.pop("sidebar_entrada_oferta_id", None)
+        st.session_state.pop("_sidebar_entrada_oferta_aplicada_id", None)
         st.rerun()
 
     _sync_aportacion_usuario(u["id"])
@@ -3908,6 +4042,62 @@ def main():
             st.caption("---")
             st.caption(f"**Total gastos compra: {d['total']:.0f} €**")
 
+    hipotecas_sb = ghd.get_hipotecas(u["id"])
+    _inv_ids_agenda = {int(i.get("id") or 0) for i in inmuebles}
+    _ofertas_sb = [
+        o for o in ghd.get_ofertas_compra(u["id"]) if int(o.get("inmueble_id") or 0) in _inv_ids_agenda
+    ]
+    _ofertas_sb.sort(
+        key=lambda x: x.get("fecha_actualizado") or x.get("fecha_creado") or "",
+        reverse=True,
+    )
+    _lbl_estado_of = {k: v for k, v in ESTADOS_OFERTA_COMPRA}
+
+    with st.sidebar.expander("📋 Oferta → Entrada y gastos", expanded=False):
+        st.caption(
+            "Carga en la pestaña **Entrada y gastos** la simulación guardada en GitHub (precio, gastos y provisiones de la oferta)."
+        )
+        if not hipotecas_sb:
+            st.caption("Necesitas al menos una hipoteca dada de alta.")
+        elif not _ofertas_sb:
+            st.caption("Sin ofertas para inmuebles de tu agenda. Guárdalas en «Entrada y gastos».")
+        else:
+            _oid_opts = [-1] + [int(x.get("id") or 0) for x in _ofertas_sb if int(x.get("id") or 0) > 0]
+
+            def _fmt_sidebar_oferta(oid: int) -> str:
+                if oid == -1:
+                    return "— Ninguna (no aplicar desde aquí) —"
+                oc = next((z for z in _ofertas_sb if int(z.get("id") or 0) == oid), None)
+                if not oc:
+                    return f"#{oid}"
+                iid = int(oc.get("inmueble_id") or 0)
+                inv_l = next((i for i in inmuebles if int(i.get("id") or 0) == iid), None)
+                dm = _duracion_minutos_a_destino(inv_l, gps_destino) if inv_l else None
+                loc = _titulo_inmueble(inv_l, dm) if inv_l else f"Inmueble {iid}"
+                if len(loc) > 36:
+                    loc = loc[:33] + "…"
+                nom = (oc.get("nombre") or "Sin nombre")[:24]
+                est = _lbl_estado_of.get(oc.get("estado"), str(oc.get("estado") or ""))[:14]
+                net = float(oc.get("total_a_aportar") or 0)
+                return f"#{oid} · {nom} · {est} · {net:.0f} € · {loc}"
+
+            st.selectbox(
+                "Oferta guardada",
+                _oid_opts,
+                format_func=_fmt_sidebar_oferta,
+                key="sidebar_entrada_oferta_id",
+                help="Al elegir una oferta se ajustan hipoteca e inmueble en la simulación y se cargan sus datos (como «Cargar en la simulación»).",
+            )
+            sel_o = int(st.session_state.get("sidebar_entrada_oferta_id") or -1)
+            last_o = st.session_state.get("_sidebar_entrada_oferta_aplicada_id")
+            if sel_o != -1 and sel_o != last_o:
+                oc_pick = next((z for z in _ofertas_sb if int(z.get("id") or 0) == sel_o), None)
+                if oc_pick and _aplicar_oferta_entrada_gastos_a_session(oc_pick, inmuebles, hipotecas_sb):
+                    st.session_state["_sidebar_entrada_oferta_aplicada_id"] = sel_o
+                    st.rerun()
+            elif sel_o == -1 and last_o is not None:
+                st.session_state["_sidebar_entrada_oferta_aplicada_id"] = None
+
     st.sidebar.markdown("---")
     st.sidebar.caption(f"**Hipochorro** v{VERSION_APP}")
 
@@ -3965,6 +4155,8 @@ def main():
         st.subheader("Changelog")
         st.markdown(f"**Versión actual: {VERSION_APP}**")
         st.markdown("""
+        - **1.20.2** — **Entrada y gastos:** en el resumen, **indicadores visuales**: barras apiladas (financiación del precio; composición del bruto), **gráfico de barras** entrada vs gastos, barra **st.progress** de cobertura de provisiones frente al bruto, gráfica **tasación vs media del barrio** (o solo tasación si falta la media), bloque **Hipoteca y provisiones** con métricas.
+        - **1.20.1** — **Sidebar:** expander **Oferta → Entrada y gastos** para elegir una oferta guardada en GitHub y cargar la simulación (misma lógica que «Cargar en la simulación» en la pestaña); el selector se sincroniza al cargar desde la pestaña y se resetea si eliminas esa oferta.
         - **1.20.0** — **UI Material 3:** formularios de alta en expanders **➕** (hipotecas, inmuebles, ofertas, perfiles de provisiones); edición en expanders **✏️**; **provisiones** en sidebar colapsadas por defecto; tarjetas de **conclusión** (comparador hipotecas, vivienda seleccionada, comparador inmuebles, amortizar/invertir, efecto amortización extra). Tema y CSS alineados con paleta tipo Android/Material 3.
         - **1.19.5** — **Entrada y gastos:** tras el neto a aportar, **tasación objetivo** (precio simulado ÷ 0,80, supuesto precio = 80% tasación) junto al **valor medio del barrio** de la ficha; rojo y con signo negativo si la tasación orientativa supera esa media, verde si queda por debajo.
         - **1.19.4** — **Gastos de compra:** el % de comisión de la simulación **siempre** puede aplicarse (controles visibles aunque la ficha sea particular); se usa ese % en `gastos_totales`, así la suma incluye comisión cuando el porcentaje es mayor que cero. La línea de suma y la comprobación numérica listan I.T.P., tasas y comisión.
