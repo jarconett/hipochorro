@@ -70,7 +70,7 @@ HELP_TAE = (
 APIFY_TOKEN_SECRET = "APIFY_TOKEN_SECRET"
 
 # Versión de la aplicación (visible en sidebar y changelog)
-VERSION_APP = "1.19.5"
+VERSION_APP = "1.20.0"
 
 # Gastos de compra (sobre precio de la vivienda / ITP)
 ITP_PCT = 7.0           # Impuesto de Transmisiones Patrimoniales: % sobre precio vivienda
@@ -328,55 +328,110 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
-# CSS global: aspecto profesional (espaciado, cards, accesibilidad)
-# Inspirado en web-design-guidelines: focus visible, tipografía, contraste
+# CSS global: Material 3 / Android (superficies, esquinas 16px, tarjetas de conclusión)
 st.markdown(
     """
     <style>
-    /* Contenedor principal: padding y lectura cómoda */
-    .block-container { padding-top: 1.5rem; padding-bottom: 2rem; max-width: 100%; }
-    /* Encabezados: jerarquía clara y espacio */
-    h1, h2, h3 { font-weight: 600; margin-top: 1.25em; margin-bottom: 0.5em; }
-    h1 { font-size: 1.75rem; border-bottom: 2px solid var(--primary-color, #0d47a1); padding-bottom: 0.35rem; }
-    /* Expanders tipo card: sombra sutil y borde redondeado */
-    [data-testid="stExpander"] { border-radius: 0.5rem; box-shadow: 0 1px 3px rgba(0,0,0,0.06); border: 1px solid rgba(0,0,0,0.06); }
-    /* Accesibilidad: anillo de foco visible (nunca outline: none sin reemplazo) */
-    button:focus-visible, [data-testid="stSelectbox"]:focus-within { outline: 2px solid var(--primary-color, #0d47a1); outline-offset: 2px; }
-    /* Métricas y números: tabular-nums para alineación */
-    [data-testid="stMetricValue"] { font-variant-numeric: tabular-nums; }
-    /* Sidebar: separación visual */
-    [data-testid="stSidebar"] { border-right: 1px solid rgba(0,0,0,0.08); }
-    /* Botones primarios: más contraste */
-    .stButton > button { font-weight: 500; border-radius: 0.5rem; }
-    /* Tabs: barra fija al scroll con contraste correcto (fondo y texto legibles) */
+    .block-container { padding-top: 1.25rem; padding-bottom: 2rem; max-width: 100%; }
+    h1, h2, h3 { font-weight: 600; margin-top: 1.1em; margin-bottom: 0.45em; letter-spacing: -0.01em; }
+    h1 { font-size: 1.65rem; border-bottom: none; padding-bottom: 0.25rem; }
+    [data-testid="stExpander"] {
+      border-radius: 16px !important;
+      border: 1px solid rgba(121, 116, 126, 0.22) !important;
+      box-shadow: 0 1px 2px rgba(0,0,0,0.04), 0 2px 8px rgba(0,0,0,0.05) !important;
+      background: rgba(255,255,255,0.55) !important;
+      margin-bottom: 0.5rem !important;
+    }
+    [data-testid="stExpander"] summary { font-weight: 600 !important; font-size: 0.95rem !important; }
+    [data-theme="dark"] [data-testid="stExpander"] {
+      background: rgba(43, 41, 48, 0.65) !important;
+      border-color: rgba(230, 225, 229, 0.12) !important;
+    }
+    button:focus-visible, [data-testid="stSelectbox"]:focus-within {
+      outline: 2px solid var(--primary-color, #6750A4); outline-offset: 2px;
+    }
+    [data-testid="stMetricValue"] { font-variant-numeric: tabular-nums; font-weight: 600; }
+    [data-testid="stSidebar"] { border-right: 1px solid rgba(121, 116, 126, 0.2); }
+    .stButton > button {
+      font-weight: 600 !important;
+      border-radius: 999px !important;
+      transition: transform 0.12s ease, box-shadow 0.12s ease;
+    }
+    .stButton > button:hover { box-shadow: 0 2px 8px rgba(0,0,0,0.08); }
     .stTabs [data-baseweb="tab-list"] {
-      gap: 0.25rem; position: sticky; top: 0; z-index: 999;
-      background: #f1f5f9 !important;
-      padding-bottom: 0.25rem; margin-bottom: 0.5rem;
-      box-shadow: 0 1px 0 rgba(0,0,0,0.08);
+      gap: 0.35rem; position: sticky; top: 0; z-index: 999;
+      background: #E8DEF8 !important;
+      padding: 0.35rem 0.5rem 0.5rem 0.5rem; margin-bottom: 0.65rem;
+      border-radius: 16px !important;
+      box-shadow: 0 1px 2px rgba(0,0,0,0.06);
     }
     .stTabs [data-baseweb="tab-list"] [data-baseweb="tab"],
-    .stTabs [data-baseweb="tab-list"] span { color: #1e293b !important; }
-    .stTabs [data-baseweb="tab"] { padding: 0.5rem 1rem; border-radius: 0.5rem; }
-    .stTabs [data-baseweb="tab"][aria-selected="true"],
-    .stTabs [data-baseweb="tab"][aria-selected="true"] span { color: var(--primary-color, #0d47a1) !important; font-weight: 600; }
-    /* Tema oscuro: barra sticky con colores dark (Streamlit aplica data-theme en un ancestro) */
-    [data-theme="dark"] .stTabs [data-baseweb="tab-list"] {
-      background: #1e293b !important;
+    .stTabs [data-baseweb="tab-list"] span { color: #49454F !important; }
+    .stTabs [data-baseweb="tab"] { padding: 0.45rem 0.9rem; border-radius: 12px !important; }
+    .stTabs [data-baseweb="tab"][aria-selected="true"] {
+      background: #FEF7FF !important;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.08);
     }
-    [data-theme="dark"] .stTabs [data-baseweb="tab-list"] [data-baseweb="tab"]:not([aria-selected="true"]),
-    [data-theme="dark"] .stTabs [data-baseweb="tab-list"] span { color: #f1f5f9 !important; }
-    [data-theme="dark"] .stTabs [data-baseweb="tab"][aria-selected="true"] span { color: #64b5f6 !important; }
-    /* Si el layout duplica el bloque de tabs (p. ej. en scroll), ocultar el segundo */
+    .stTabs [data-baseweb="tab"][aria-selected="true"] span {
+      color: #6750A4 !important; font-weight: 700 !important;
+    }
+    [data-theme="dark"] .stTabs [data-baseweb="tab-list"] {
+      background: #2B2930 !important;
+    }
+    [data-theme="dark"] .stTabs [data-baseweb="tab-list"] [data-baseweb="tab"]:not([aria-selected="true"]) span {
+      color: #CAC4D0 !important;
+    }
+    [data-theme="dark"] .stTabs [data-baseweb="tab"][aria-selected="true"] {
+      background: #211F26 !important;
+    }
+    [data-theme="dark"] .stTabs [data-baseweb="tab"][aria-selected="true"] span {
+      color: #D0BCFF !important;
+    }
+    .hipo-m3-insight {
+      border-radius: 20px;
+      padding: 1rem 1.25rem 1.15rem 1.25rem;
+      margin: 0.75rem 0 1rem 0;
+      border: 1px solid transparent;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.06);
+    }
+    .hipo-m3-insight--primary {
+      background: rgba(103, 80, 164, 0.11);
+      border-color: rgba(103, 80, 164, 0.28);
+      color: #1C1B1F;
+    }
+    .hipo-m3-insight--primary .hipo-m3-insight-title { color: #4F378A; }
+    .hipo-m3-insight--success {
+      background: rgba(74, 99, 79, 0.12);
+      border-color: rgba(74, 99, 79, 0.28);
+      color: #1C1B1F;
+    }
+    .hipo-m3-insight--success .hipo-m3-insight-title { color: #1D3124; }
+    .hipo-m3-insight-title {
+      font-size: 0.72rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      margin-bottom: 0.4rem;
+    }
+    .hipo-m3-insight-body { font-size: 1.05rem; line-height: 1.5; font-weight: 500; }
     [data-testid="stTabs"] ~ [data-testid="stTabs"] { display: none !important; }
-    /* NO ocultar .block-container ~ .block-container: en algunos layouts el contenido de las pestañas
-       va en un segundo contenedor y quedaría invisible (p. ej. solo login duplicado visible). */
-    /* Ocultar bloques que contienen el formulario de login cuando están después de las pestañas (duplicado al scroll) */
     [data-testid="stVerticalBlock"]:has([data-testid="stForm"]) ~ [data-testid="stVerticalBlock"]:has([data-testid="stForm"]) { display: none !important; }
     </style>
     """,
     unsafe_allow_html=True,
 )
+
+
+def _ui_insight_card(lines: list[str], title: str = "Conclusión", *, tone: str = "primary") -> None:
+    """Resalta indicadores comparativos (texto plano, escapado). tone: primary | success."""
+    cls = "hipo-m3-insight--success" if tone == "success" else "hipo-m3-insight--primary"
+    body = "<br/>".join(html.escape(L) for L in lines)
+    st.markdown(
+        f'<div class="hipo-m3-insight {cls}">'
+        f'<div class="hipo-m3-insight-title">{html.escape(title)}</div>'
+        f'<div class="hipo-m3-insight-body">{body}</div></div>',
+        unsafe_allow_html=True,
+    )
 
 # Estado de sesión
 if "usuario_actual" not in st.session_state:
@@ -882,7 +937,7 @@ def _campo_comision(label: str, value: float = 0.0, min_value: float = 0.0, step
 
 def formulario_hipoteca(usuario_id: int):
     """Formulario de alta de hipoteca con todos los campos."""
-    st.subheader("Alta de hipoteca bancaria")
+    st.caption("Rellena los datos y pulsa **Guardar hipoteca** al final del formulario.")
     inv_sel = st.session_state.get("inmueble_seleccionado")
     def_valor = 150000.0
     def_cantidad = 150000.0
@@ -1716,93 +1771,94 @@ def agenda_inmuebles(usuario_id: int):
     """Pestaña agenda de inmuebles: alta, listado y fotos desde URL."""
     st.subheader("Agenda de inmuebles")
     st.caption("Alta de viviendas a comparar. En cada ficha puedes usar «Obtener / Recargar imágenes» desde el anuncio Idealista y/o la URL de la inmobiliaria para elegir qué imágenes añadir.")
-    with st.form("form_inmueble"):
-        importe = st.number_input("Importe de la vivienda (€) *", min_value=0.0, value=150000.0, step=5000.0)
-        valoracion = st.number_input("Valoración (€)", min_value=0.0, value=0.0, step=5000.0, help="Valor de mercado o tasación (opcional); se compara con el precio en la ficha.")
-        valor_medio_barrio = st.number_input(
-            "Valor medio viviendas del barrio (€)",
-            min_value=0.0,
-            value=0.0,
-            step=100.0,
-            help="Referencia del precio medio en la zona (portales, datos de mercado). Opcional.",
-        )
-        localizacion = st.text_input("Localización", placeholder="Ej: Madrid, zona Norte")
-        ano_construccion = st.number_input("Año de construcción", min_value=1800, max_value=2030, value=2000, step=1)
-        m2_construidos = st.number_input("m² construidos", min_value=0.0, value=90.0, step=1.0)
-        m2_utiles = st.number_input("m² útiles", min_value=0.0, value=75.0, step=1.0)
-        superficie_placas_m2 = st.number_input("Superficie disponible para placas solares (m²)", min_value=0.0, value=0.0, step=1.0, help="Superficie útil para instalar placas; sirve para estimar nº de placas y si podría acogerse a subvención.")
-        habitaciones = st.number_input("Habitaciones", min_value=0, max_value=20, value=3, step=1)
-        banos = st.number_input("Baños", min_value=0, max_value=10, value=2, step=1)
-        aseo = st.number_input("Aseos", min_value=0, max_value=10, value=0, step=1, help="Medios baños o aseos.")
-        st.caption("**Certificado energético:** valor exacto (opcional) para asignar letra automática; si no, elige la letra y se usará el valor medio del rango.")
-        col_c1, col_c2 = st.columns(2)
-        with col_c1:
-            consumo_exacto_alta = st.number_input("Consumo exacto (kWh/m²·año)", min_value=0.0, value=0.0, step=5.0, help="Opcional. Si lo rellenas, se asigna la letra automáticamente.")
-            certificado_consumo = st.selectbox("Cert. energético (consumo)", CERT_ENERGETICO_OPCIONES, disabled=(consumo_exacto_alta > 0))
-            if consumo_exacto_alta > 0:
-                st.caption(f"→ Letra asignada: **{_letra_desde_consumo_kwh_m2(consumo_exacto_alta)}**")
-        with col_c2:
-            emisiones_exactas_alta = st.number_input("Emisiones exactas (kg CO₂/m²·año)", min_value=0.0, value=0.0, step=1.0, help="Opcional. Si lo rellenas, se asigna la letra automáticamente.")
-            certificado_emisiones = st.selectbox("Cert. energético (emisiones)", CERT_ENERGETICO_OPCIONES, disabled=(emisiones_exactas_alta > 0))
-            if emisiones_exactas_alta > 0:
-                st.caption(f"→ Letra asignada: **{_letra_desde_emisiones_kg_m2(emisiones_exactas_alta)}**")
-        zona_climatica_cte = st.selectbox("Zona climática CTE", ZONAS_CTE_OPCIONES, index=0, help="Clasificación según CTE (ej. B3, C2). Puedes rellenar desde el PDF de zonas por municipio.")
-        notas = st.text_area("Notas", placeholder="Ej: oferta realizada, necesita reforma, observaciones…", height=80)
-        col_ps, col_pi, col_so = st.columns(3)
-        with col_ps:
-            piscina = st.checkbox("Piscina", value=False)
-        with col_pi:
-            sotano = st.checkbox("Sótano", value=False)
-        with col_so:
-            placas_solares = st.checkbox("Placas solares", value=False)
-        tipo_venta = st.radio("Tipo de venta", ["Particular", "Inmobiliaria"], horizontal=True)
-        inmobiliaria = tipo_venta == "Inmobiliaria"
-        comision_venta_pct = st.number_input("% comisión por la venta (solo inmobiliaria)", min_value=0.0, max_value=20.0, value=3.0, step=0.5)
-        url_anuncio = st.text_input("URL del anuncio Idealista", placeholder="https://www.idealista.com/...")
-        url_inmobiliaria = st.text_input("URL inmobiliaria", placeholder="https://...", help="Web de la inmobiliaria con el anuncio; suele permitir listar las imágenes con más facilidad.")
-        categoria = st.radio("Categoría", CATEGORIAS_INMUEBLE, horizontal=True, index=0)
-        st.caption("Horas de luz anuales (opcional): pega aquí el contenido de annual-sunlight.json (la subida de archivo suele fallar en la nube).")
-        sunlight_paste_alta = st.text_area("JSON horas de sol (pegar)", value="", height=100, key="alta_sunlight_paste", placeholder='{"minutesOfDirectSunPerDay": [...], ...}')
-        if st.form_submit_button("Dar de alta inmueble"):
-            cert_consumo_alta = _letra_desde_consumo_kwh_m2(consumo_exacto_alta) if consumo_exacto_alta > 0 else (certificado_consumo if certificado_consumo != "—" else "")
-            cert_emisiones_alta = _letra_desde_emisiones_kg_m2(emisiones_exactas_alta) if emisiones_exactas_alta > 0 else (certificado_emisiones if certificado_emisiones != "—" else "")
-            inv = {
-                "importe": float(importe),
-                "valoracion": float(valoracion),
-                "valor_medio_barrio": float(valor_medio_barrio),
-                "localizacion": (localizacion or "").strip(),
-                "ano_construccion": int(ano_construccion),
-                "m2_construidos": float(m2_construidos),
-                "m2_utiles": float(m2_utiles),
-                "superficie_placas_m2": float(superficie_placas_m2),
-                "habitaciones": int(habitaciones),
-                "banos": int(banos),
-                "aseo": int(aseo),
-                "certificado_consumo": cert_consumo_alta,
-                "certificado_emisiones": cert_emisiones_alta,
-                "consumo_exacto_kwh_m2": float(consumo_exacto_alta),
-                "emisiones_exactas_kg_m2": float(emisiones_exactas_alta),
-                "zona_climatica_cte": zona_climatica_cte if zona_climatica_cte != "—" else "",
-                "notas": (notas or "").strip(),
-                "piscina": bool(piscina),
-                "sotano": bool(sotano),
-                "placas_solares": bool(placas_solares),
-                "inmobiliaria": bool(inmobiliaria),
-                "comision_venta_pct": float(comision_venta_pct) if inmobiliaria else 0.0,
-                "url_anuncio": (url_anuncio or "").strip(),
-                "url_inmobiliaria": (url_inmobiliaria or "").strip(),
-                "categoria": categoria,
-                "fecha_creacion": datetime.now().isoformat(),
-            }
-            nuevo = ghd.añadir_inmueble(usuario_id, inv)
-            if nuevo:
-                parsed_sun = _parse_sunlight_json_str((sunlight_paste_alta or "").strip()) if (sunlight_paste_alta or "").strip() else None
-                if parsed_sun and ghd.guardar_sunlight_inmueble(usuario_id, nuevo["id"], parsed_sun):
-                    ghd.actualizar_inmueble(usuario_id, {**nuevo, "horas_luz_anual": True})
-                st.success("Inmueble dado de alta. Abre su ficha y usa «Obtener / Recargar imágenes» para elegir las fotos desde Idealista y/o la web de la inmobiliaria.")
-                st.rerun()
-            else:
-                st.error("Error al guardar. ¿GITHUB_TOKEN configurado?")
+    with st.expander("➕ Nuevo inmueble", expanded=False):
+        with st.form("form_inmueble"):
+            importe = st.number_input("Importe de la vivienda (€) *", min_value=0.0, value=150000.0, step=5000.0)
+            valoracion = st.number_input("Valoración (€)", min_value=0.0, value=0.0, step=5000.0, help="Valor de mercado o tasación (opcional); se compara con el precio en la ficha.")
+            valor_medio_barrio = st.number_input(
+                "Valor medio viviendas del barrio (€)",
+                min_value=0.0,
+                value=0.0,
+                step=100.0,
+                help="Referencia del precio medio en la zona (portales, datos de mercado). Opcional.",
+            )
+            localizacion = st.text_input("Localización", placeholder="Ej: Madrid, zona Norte")
+            ano_construccion = st.number_input("Año de construcción", min_value=1800, max_value=2030, value=2000, step=1)
+            m2_construidos = st.number_input("m² construidos", min_value=0.0, value=90.0, step=1.0)
+            m2_utiles = st.number_input("m² útiles", min_value=0.0, value=75.0, step=1.0)
+            superficie_placas_m2 = st.number_input("Superficie disponible para placas solares (m²)", min_value=0.0, value=0.0, step=1.0, help="Superficie útil para instalar placas; sirve para estimar nº de placas y si podría acogerse a subvención.")
+            habitaciones = st.number_input("Habitaciones", min_value=0, max_value=20, value=3, step=1)
+            banos = st.number_input("Baños", min_value=0, max_value=10, value=2, step=1)
+            aseo = st.number_input("Aseos", min_value=0, max_value=10, value=0, step=1, help="Medios baños o aseos.")
+            st.caption("**Certificado energético:** valor exacto (opcional) para asignar letra automática; si no, elige la letra y se usará el valor medio del rango.")
+            col_c1, col_c2 = st.columns(2)
+            with col_c1:
+                consumo_exacto_alta = st.number_input("Consumo exacto (kWh/m²·año)", min_value=0.0, value=0.0, step=5.0, help="Opcional. Si lo rellenas, se asigna la letra automáticamente.")
+                certificado_consumo = st.selectbox("Cert. energético (consumo)", CERT_ENERGETICO_OPCIONES, disabled=(consumo_exacto_alta > 0))
+                if consumo_exacto_alta > 0:
+                    st.caption(f"→ Letra asignada: **{_letra_desde_consumo_kwh_m2(consumo_exacto_alta)}**")
+            with col_c2:
+                emisiones_exactas_alta = st.number_input("Emisiones exactas (kg CO₂/m²·año)", min_value=0.0, value=0.0, step=1.0, help="Opcional. Si lo rellenas, se asigna la letra automáticamente.")
+                certificado_emisiones = st.selectbox("Cert. energético (emisiones)", CERT_ENERGETICO_OPCIONES, disabled=(emisiones_exactas_alta > 0))
+                if emisiones_exactas_alta > 0:
+                    st.caption(f"→ Letra asignada: **{_letra_desde_emisiones_kg_m2(emisiones_exactas_alta)}**")
+            zona_climatica_cte = st.selectbox("Zona climática CTE", ZONAS_CTE_OPCIONES, index=0, help="Clasificación según CTE (ej. B3, C2). Puedes rellenar desde el PDF de zonas por municipio.")
+            notas = st.text_area("Notas", placeholder="Ej: oferta realizada, necesita reforma, observaciones…", height=80)
+            col_ps, col_pi, col_so = st.columns(3)
+            with col_ps:
+                piscina = st.checkbox("Piscina", value=False)
+            with col_pi:
+                sotano = st.checkbox("Sótano", value=False)
+            with col_so:
+                placas_solares = st.checkbox("Placas solares", value=False)
+            tipo_venta = st.radio("Tipo de venta", ["Particular", "Inmobiliaria"], horizontal=True)
+            inmobiliaria = tipo_venta == "Inmobiliaria"
+            comision_venta_pct = st.number_input("% comisión por la venta (solo inmobiliaria)", min_value=0.0, max_value=20.0, value=3.0, step=0.5)
+            url_anuncio = st.text_input("URL del anuncio Idealista", placeholder="https://www.idealista.com/...")
+            url_inmobiliaria = st.text_input("URL inmobiliaria", placeholder="https://...", help="Web de la inmobiliaria con el anuncio; suele permitir listar las imágenes con más facilidad.")
+            categoria = st.radio("Categoría", CATEGORIAS_INMUEBLE, horizontal=True, index=0)
+            st.caption("Horas de luz anuales (opcional): pega aquí el contenido de annual-sunlight.json (la subida de archivo suele fallar en la nube).")
+            sunlight_paste_alta = st.text_area("JSON horas de sol (pegar)", value="", height=100, key="alta_sunlight_paste", placeholder='{"minutesOfDirectSunPerDay": [...], ...}')
+            if st.form_submit_button("Dar de alta inmueble"):
+                cert_consumo_alta = _letra_desde_consumo_kwh_m2(consumo_exacto_alta) if consumo_exacto_alta > 0 else (certificado_consumo if certificado_consumo != "—" else "")
+                cert_emisiones_alta = _letra_desde_emisiones_kg_m2(emisiones_exactas_alta) if emisiones_exactas_alta > 0 else (certificado_emisiones if certificado_emisiones != "—" else "")
+                inv = {
+                    "importe": float(importe),
+                    "valoracion": float(valoracion),
+                    "valor_medio_barrio": float(valor_medio_barrio),
+                    "localizacion": (localizacion or "").strip(),
+                    "ano_construccion": int(ano_construccion),
+                    "m2_construidos": float(m2_construidos),
+                    "m2_utiles": float(m2_utiles),
+                    "superficie_placas_m2": float(superficie_placas_m2),
+                    "habitaciones": int(habitaciones),
+                    "banos": int(banos),
+                    "aseo": int(aseo),
+                    "certificado_consumo": cert_consumo_alta,
+                    "certificado_emisiones": cert_emisiones_alta,
+                    "consumo_exacto_kwh_m2": float(consumo_exacto_alta),
+                    "emisiones_exactas_kg_m2": float(emisiones_exactas_alta),
+                    "zona_climatica_cte": zona_climatica_cte if zona_climatica_cte != "—" else "",
+                    "notas": (notas or "").strip(),
+                    "piscina": bool(piscina),
+                    "sotano": bool(sotano),
+                    "placas_solares": bool(placas_solares),
+                    "inmobiliaria": bool(inmobiliaria),
+                    "comision_venta_pct": float(comision_venta_pct) if inmobiliaria else 0.0,
+                    "url_anuncio": (url_anuncio or "").strip(),
+                    "url_inmobiliaria": (url_inmobiliaria or "").strip(),
+                    "categoria": categoria,
+                    "fecha_creacion": datetime.now().isoformat(),
+                }
+                nuevo = ghd.añadir_inmueble(usuario_id, inv)
+                if nuevo:
+                    parsed_sun = _parse_sunlight_json_str((sunlight_paste_alta or "").strip()) if (sunlight_paste_alta or "").strip() else None
+                    if parsed_sun and ghd.guardar_sunlight_inmueble(usuario_id, nuevo["id"], parsed_sun):
+                        ghd.actualizar_inmueble(usuario_id, {**nuevo, "horas_luz_anual": True})
+                    st.success("Inmueble dado de alta. Abre su ficha y usa «Obtener / Recargar imágenes» para elegir las fotos desde Idealista y/o la web de la inmobiliaria.")
+                    st.rerun()
+                else:
+                    st.error("Error al guardar. ¿GITHUB_TOKEN configurado?")
 
     inmuebles = ghd.get_inmuebles(usuario_id)
     if inmuebles:
@@ -1885,7 +1941,7 @@ def agenda_inmuebles(usuario_id: int):
             cat = _categoria_inmueble(inv)
             emoji = "🟢" if cat == CATEGORIA_INTERESADOS else "🔵"
             d_min = _duracion_minutos_a_destino(inv, destino_gps)
-            titulo = f"{emoji} {_titulo_inmueble(inv, d_min)}"
+            titulo = f"✏️ {emoji} {_titulo_inmueble(inv, d_min)}"
             fotos_urls = list(fotos_map_ui.get(inv.get("id") or 0, ()))
             col_thumb, col_exp = st.columns([0.08, 0.92])
             with col_thumb:
@@ -2156,6 +2212,14 @@ def _tab_comparador_inmuebles(usuario_id: int):
         return
     indices = [opts.index(s) for s in seleccionados if s in opts]
     elegidos = [inmuebles[i] for i in indices]
+    costes_por_inv = [(inv, _coste_total_inmueble(inv)) for inv in elegidos]
+    best_inv, best_coste = min(costes_por_inv, key=lambda x: x[1])
+    loc_b = (best_inv.get("localizacion") or "").strip() or "Inmueble"
+    pm_b = _precio_m2_inmueble(best_inv)
+    lineas_best = [f"Menor coste total de compra estimado: {loc_b} — {best_coste:.0f} €"]
+    if pm_b is not None:
+        lineas_best.append(f"€/m² en ese inmueble: {pm_b:.0f} €/m²")
+    _ui_insight_card(lineas_best, title="Indicador rápido (coste total)", tone="success")
     # Atributos a comparar (etiqueta -> valor por inmueble)
     def _valor(inv: dict, clave: str, fmt=str):
         v = inv.get(clave)
@@ -2969,266 +3033,266 @@ def _tab_entrada_gastos_financiacion(usuario_id: int):
                 _render_bloque_cobertura(tit, br, gg, provisiones_total)
 
     st.markdown("---")
-    st.subheader("📋 Ofertas de compra y seguimiento")
-    st.caption(
-        "Pon nombre y estado y pulsa **Guardar oferta**. **Contraoferta:** cambia el precio arriba y guarda de nuevo "
-        "o usa **Actualizar** si cargaste una oferta. Requiere `GITHUB_TOKEN` para persistir en el repo."
-    )
-
-    nombre_of = st.text_input(
-        "Nombre de la oferta",
-        placeholder="Ej. Primera oferta, Contraoferta vendedor…",
-        key=f"entrada_nombre_oferta_{inv_id}",
-    )
-    ix_est = st.selectbox(
-        "Estado de seguimiento",
-        list(range(len(estado_labels))),
-        format_func=lambda i: estado_labels[i],
-        key=f"entrada_estado_oferta_{inv_id}",
-    )
-    estado_sel = estado_vals[ix_est]
-    notas_of = st.text_area("Notas (opcional)", key=f"entrada_notas_oferta_{inv_id}", height=68)
-
-    def _payload_oferta() -> dict:
-        t2 = _totales_entrada_gastos(
-            precio_compra,
-            inv,
-            notaria,
-            registro,
-            gestoria,
-            efectivo_para_compra,
-            provisiones_total,
-            pct_financiacion,
-            pct_comision_inmobiliaria=pct_comision_sim,
-            comision_sobre_precio_mas_efectivo_compra=comision_sobre_precio_mas_ef_compra,
-        )
-        now = datetime.now().isoformat(timespec="seconds")
-        return {
-            "inmueble_id": inv_id,
-            "hipoteca_id": hipoteca_id,
-            "nombre": (nombre_of or "").strip() or f"Oferta {now[:10]}",
-            "precio_compra": precio_compra,
-            "notaria": notaria,
-            "registro": registro,
-            "gestoria": gestoria,
-            "efectivo_para_compra": efectivo_para_compra,
-            "provisiones_total": provisiones_total,
-            "total_bruto_antes_provisiones": t2["total_bruto_antes_provisiones"],
-            "efectivo_adicional": provisiones_total,
-            "efectivo_por_concepto": {
-                k: float(st.session_state.get(f"aport_imp_{k}", 0) or 0) for k, _ in CONCEPTOS_EFECTIVO_APORTACION
-            },
-            "efectivo_incluir_conceptos": {
-                k: bool(st.session_state.get(f"aport_inc_{k}", True)) for k, _ in CONCEPTOS_EFECTIVO_APORTACION
-            },
-            "pct_financiacion": pct_financiacion,
-            "comision_base_incluye_efectivo": bool(t2.get("comision_base_incluye_efectivo", False)),
-            "estado": estado_sel,
-            "notas": (notas_of or "").strip(),
-            "itp": t2["itp"],
-            "comision_inmobiliaria_pct": t2["comision_inmobiliaria_pct"],
-            "comision_inmobiliaria": t2["comision_inmobiliaria"],
-            "gastos_totales_compra": t2["gastos_totales"],
-            "entrada_compra": t2["entrada_compra"],
-            "total_a_aportar": t2["total_a_aportar"],
-            "fecha_actualizado": now,
-        }
-
-    st.markdown("**Guardar**")
-    gsave1, gsave2 = st.columns(2)
-    with gsave1:
-        btn_guardar = st.button(
-            "💾 Guardar oferta",
-            key=f"entrada_guardar_nueva_{inv_id}",
-            help="Crea un nuevo registro en GitHub con la simulación actual (nombre y estado de arriba).",
-        )
-    with gsave2:
-        edit_id_btn = st.session_state.get(k_edit)
-        btn_actualizar = st.button(
-            "Actualizar oferta cargada",
-            key=f"entrada_guardar_actualizar_{inv_id}",
-            disabled=not bool(edit_id_btn),
-            help="Sustituye la oferta que cargaste con «Cargar en la simulación».",
-        )
-    if st.session_state.get(k_edit):
-        st.caption(f"Editando oferta **#{st.session_state[k_edit]}** — puedes pulsar **Actualizar oferta cargada**.")
-    else:
-        st.caption("Para actualizar una existente, primero **Cargar** una oferta de la lista de abajo.")
-
-    if btn_guardar:
-        pl = _payload_oferta()
-        pl["fecha_creado"] = pl["fecha_actualizado"]
-        r = ghd.añadir_oferta_compra(usuario_id, pl)
-        if r:
-            st.session_state[k_edit] = int(r.get("id") or 0)
-            st.success(f"Guardada oferta #{r.get('id')}.")
-            st.rerun()
-        else:
-            st.error("No se pudo guardar (¿GITHUB_TOKEN configurado?).")
-
-    if btn_actualizar:
-        edit_id = st.session_state.get(k_edit)
-        if not edit_id:
-            st.warning("Primero **Cargar** una oferta en la lista de abajo, o pulsa **Guardar oferta**.")
-        else:
-            pl = _payload_oferta()
-            pl["id"] = int(edit_id)
-            oc0 = next((x for x in ofertas_todas if x.get("id") == edit_id), None)
-            if oc0 and oc0.get("fecha_creado"):
-                pl["fecha_creado"] = oc0["fecha_creado"]
-            else:
-                pl["fecha_creado"] = pl["fecha_actualizado"]
-            if ghd.actualizar_oferta_compra(usuario_id, pl):
-                st.success(f"Oferta #{edit_id} actualizada.")
-                st.rerun()
-            else:
-                st.error("No se pudo actualizar.")
-
-    st.markdown("---")
-    st.markdown("**Todas tus ofertas guardadas**")
-    inv_por_id = {int(i.get("id", 0) or 0): i for i in inmuebles}
-
-    def _titulo_inmueble_oferta(oid: object) -> str:
-        i = inv_por_id.get(int(oid or 0))
-        return _titulo_inmueble(i) if i else f"Inmueble ID {oid}"
-
-    if ofertas_tabla:
-        rows = []
-        for o in ofertas_tabla:
-            rows.append(
-                {
-                    "id": o.get("id"),
-                    "Inmueble": _titulo_inmueble_oferta(o.get("inmueble_id")),
-                    "Nombre": o.get("nombre", ""),
-                    "Estado": lbl_estado.get(o.get("estado"), o.get("estado", "")),
-                    "Precio (€)": o.get("precio_compra", 0),
-                    "Efectivo compra (€)": round(float(o.get("efectivo_para_compra") or 0), 0),
-                    "Provisiones (€)": round(
-                        float(o.get("provisiones_total", o.get("efectivo_adicional") or 0) or 0),
-                        0,
-                    ),
-                    "Total a aportar (€)": round(float(o.get("total_a_aportar") or 0), 0),
-                    "Actualizado": (o.get("fecha_actualizado") or "")[:16],
-                }
-            )
-        st.dataframe(pd.DataFrame(rows), hide_index=True, use_container_width=True)
+    with st.expander("➕ Ofertas de compra y seguimiento", expanded=False):
         st.caption(
-            "**Total a aportar** es el **neto** guardado al pulsar «Guardar oferta» o «Actualizar»: "
-            "entrada (precio − parte financiada) + **gastos de compra** (ITP, notaría, registro, gestoría, comisión y **efectivo para la compra**) "
-            "− **provisiones de fondos** (suma de los conceptos verdes marcados como incluir). "
-            "Ofertas antiguas sin `provisiones_total` usan la columna «Provisiones» a partir de `efectivo_adicional`."
+            "Pon nombre y estado y pulsa **Guardar oferta**. **Contraoferta:** cambia el precio arriba y guarda de nuevo "
+            "o usa **Actualizar** si cargaste una oferta. Requiere `GITHUB_TOKEN` para persistir en el repo."
         )
-    else:
-        st.info("Aún no hay ofertas guardadas. Rellena nombre/estado y pulsa **Guardar oferta**.")
-
-    # Selectbox por índice (entero estable). Con etiquetas largas como valor, un rerun que cambiaba
-    # el texto invalidaba la selección y Streamlit volvía al placeholder → «Cargar» no encontraba oferta.
-    pick_ix = -1
-    if ofertas_inv:
-        opciones_pick = [-1] + list(range(len(ofertas_inv)))
-
-        def _fmt_oferta_pick(i: int) -> str:
-            if i == -1:
-                return "— Elige una oferta… —"
-            o = ofertas_inv[i]
-            return (
-                f"#{o.get('id')} — {o.get('nombre', 'Sin nombre')} — "
-                f"{lbl_estado.get(o.get('estado'), o.get('estado'))} — "
-                f"{float(o.get('total_a_aportar') or 0):.0f} €"
-            )
-
-        pick_ix = int(
-            st.selectbox(
-                "Seleccionar oferta guardada (este inmueble)",
-                opciones_pick,
-                format_func=_fmt_oferta_pick,
-                key=f"entrada_pick_idx_{inv_id}",
-            )
+    
+        nombre_of = st.text_input(
+            "Nombre de la oferta",
+            placeholder="Ej. Primera oferta, Contraoferta vendedor…",
+            key=f"entrada_nombre_oferta_{inv_id}",
         )
-
-    b1, b2 = st.columns(2)
-    with b1:
-        cargar = st.button("Cargar en la simulación", key=f"entrada_btn_cargar_{inv_id}")
-    with b2:
-        borrar = st.button("Eliminar oferta seleccionada", key=f"entrada_btn_borrar_{inv_id}")
-
-    if cargar:
-        if pick_ix < 0:
-            st.warning("Selecciona una oferta en el desplegable (no solo la línea «Elige una oferta…»).")
+        ix_est = st.selectbox(
+            "Estado de seguimiento",
+            list(range(len(estado_labels))),
+            format_func=lambda i: estado_labels[i],
+            key=f"entrada_estado_oferta_{inv_id}",
+        )
+        estado_sel = estado_vals[ix_est]
+        notas_of = st.text_area("Notas (opcional)", key=f"entrada_notas_oferta_{inv_id}", height=68)
+    
+        def _payload_oferta() -> dict:
+            t2 = _totales_entrada_gastos(
+                precio_compra,
+                inv,
+                notaria,
+                registro,
+                gestoria,
+                efectivo_para_compra,
+                provisiones_total,
+                pct_financiacion,
+                pct_comision_inmobiliaria=pct_comision_sim,
+                comision_sobre_precio_mas_efectivo_compra=comision_sobre_precio_mas_ef_compra,
+            )
+            now = datetime.now().isoformat(timespec="seconds")
+            return {
+                "inmueble_id": inv_id,
+                "hipoteca_id": hipoteca_id,
+                "nombre": (nombre_of or "").strip() or f"Oferta {now[:10]}",
+                "precio_compra": precio_compra,
+                "notaria": notaria,
+                "registro": registro,
+                "gestoria": gestoria,
+                "efectivo_para_compra": efectivo_para_compra,
+                "provisiones_total": provisiones_total,
+                "total_bruto_antes_provisiones": t2["total_bruto_antes_provisiones"],
+                "efectivo_adicional": provisiones_total,
+                "efectivo_por_concepto": {
+                    k: float(st.session_state.get(f"aport_imp_{k}", 0) or 0) for k, _ in CONCEPTOS_EFECTIVO_APORTACION
+                },
+                "efectivo_incluir_conceptos": {
+                    k: bool(st.session_state.get(f"aport_inc_{k}", True)) for k, _ in CONCEPTOS_EFECTIVO_APORTACION
+                },
+                "pct_financiacion": pct_financiacion,
+                "comision_base_incluye_efectivo": bool(t2.get("comision_base_incluye_efectivo", False)),
+                "estado": estado_sel,
+                "notas": (notas_of or "").strip(),
+                "itp": t2["itp"],
+                "comision_inmobiliaria_pct": t2["comision_inmobiliaria_pct"],
+                "comision_inmobiliaria": t2["comision_inmobiliaria"],
+                "gastos_totales_compra": t2["gastos_totales"],
+                "entrada_compra": t2["entrada_compra"],
+                "total_a_aportar": t2["total_a_aportar"],
+                "fecha_actualizado": now,
+            }
+    
+        st.markdown("**Guardar**")
+        gsave1, gsave2 = st.columns(2)
+        with gsave1:
+            btn_guardar = st.button(
+                "💾 Guardar oferta",
+                key=f"entrada_guardar_nueva_{inv_id}",
+                help="Crea un nuevo registro en GitHub con la simulación actual (nombre y estado de arriba).",
+            )
+        with gsave2:
+            edit_id_btn = st.session_state.get(k_edit)
+            btn_actualizar = st.button(
+                "Actualizar oferta cargada",
+                key=f"entrada_guardar_actualizar_{inv_id}",
+                disabled=not bool(edit_id_btn),
+                help="Sustituye la oferta que cargaste con «Cargar en la simulación».",
+            )
+        if st.session_state.get(k_edit):
+            st.caption(f"Editando oferta **#{st.session_state[k_edit]}** — puedes pulsar **Actualizar oferta cargada**.")
         else:
-            oc = ofertas_inv[pick_ix]
-            st.session_state[f"_entrada_aplicar_oferta_{inv_id}"] = dict(oc)
-            st.rerun()
-
-    if borrar:
-        if pick_ix < 0:
-            st.warning("Selecciona una oferta para eliminar.")
-        else:
-            oc = ofertas_inv[pick_ix]
-            oid_del = int(oc.get("id") or 0)
-            if oid_del and ghd.eliminar_oferta_compra(usuario_id, oid_del):
-                st.session_state.pop(k_edit, None)
-                st.success("Oferta eliminada.")
+            st.caption("Para actualizar una existente, primero **Cargar** una oferta de la lista de abajo.")
+    
+        if btn_guardar:
+            pl = _payload_oferta()
+            pl["fecha_creado"] = pl["fecha_actualizado"]
+            r = ghd.añadir_oferta_compra(usuario_id, pl)
+            if r:
+                st.session_state[k_edit] = int(r.get("id") or 0)
+                st.success(f"Guardada oferta #{r.get('id')}.")
                 st.rerun()
             else:
-                st.error("No se pudo eliminar (¿token GitHub?).")
-
+                st.error("No se pudo guardar (¿GITHUB_TOKEN configurado?).")
+    
+        if btn_actualizar:
+            edit_id = st.session_state.get(k_edit)
+            if not edit_id:
+                st.warning("Primero **Cargar** una oferta en la lista de abajo, o pulsa **Guardar oferta**.")
+            else:
+                pl = _payload_oferta()
+                pl["id"] = int(edit_id)
+                oc0 = next((x for x in ofertas_todas if x.get("id") == edit_id), None)
+                if oc0 and oc0.get("fecha_creado"):
+                    pl["fecha_creado"] = oc0["fecha_creado"]
+                else:
+                    pl["fecha_creado"] = pl["fecha_actualizado"]
+                if ghd.actualizar_oferta_compra(usuario_id, pl):
+                    st.success(f"Oferta #{edit_id} actualizada.")
+                    st.rerun()
+                else:
+                    st.error("No se pudo actualizar.")
+    
+        st.markdown("---")
+        st.markdown("**Todas tus ofertas guardadas**")
+        inv_por_id = {int(i.get("id", 0) or 0): i for i in inmuebles}
+    
+        def _titulo_inmueble_oferta(oid: object) -> str:
+            i = inv_por_id.get(int(oid or 0))
+            return _titulo_inmueble(i) if i else f"Inmueble ID {oid}"
+    
+        if ofertas_tabla:
+            rows = []
+            for o in ofertas_tabla:
+                rows.append(
+                    {
+                        "id": o.get("id"),
+                        "Inmueble": _titulo_inmueble_oferta(o.get("inmueble_id")),
+                        "Nombre": o.get("nombre", ""),
+                        "Estado": lbl_estado.get(o.get("estado"), o.get("estado", "")),
+                        "Precio (€)": o.get("precio_compra", 0),
+                        "Efectivo compra (€)": round(float(o.get("efectivo_para_compra") or 0), 0),
+                        "Provisiones (€)": round(
+                            float(o.get("provisiones_total", o.get("efectivo_adicional") or 0) or 0),
+                            0,
+                        ),
+                        "Total a aportar (€)": round(float(o.get("total_a_aportar") or 0), 0),
+                        "Actualizado": (o.get("fecha_actualizado") or "")[:16],
+                    }
+                )
+            st.dataframe(pd.DataFrame(rows), hide_index=True, use_container_width=True)
+            st.caption(
+                "**Total a aportar** es el **neto** guardado al pulsar «Guardar oferta» o «Actualizar»: "
+                "entrada (precio − parte financiada) + **gastos de compra** (ITP, notaría, registro, gestoría, comisión y **efectivo para la compra**) "
+                "− **provisiones de fondos** (suma de los conceptos verdes marcados como incluir). "
+                "Ofertas antiguas sin `provisiones_total` usan la columna «Provisiones» a partir de `efectivo_adicional`."
+            )
+        else:
+            st.info("Aún no hay ofertas guardadas. Rellena nombre/estado y pulsa **Guardar oferta**.")
+    
+        # Selectbox por índice (entero estable). Con etiquetas largas como valor, un rerun que cambiaba
+        # el texto invalidaba la selección y Streamlit volvía al placeholder → «Cargar» no encontraba oferta.
+        pick_ix = -1
+        if ofertas_inv:
+            opciones_pick = [-1] + list(range(len(ofertas_inv)))
+    
+            def _fmt_oferta_pick(i: int) -> str:
+                if i == -1:
+                    return "— Elige una oferta… —"
+                o = ofertas_inv[i]
+                return (
+                    f"#{o.get('id')} — {o.get('nombre', 'Sin nombre')} — "
+                    f"{lbl_estado.get(o.get('estado'), o.get('estado'))} — "
+                    f"{float(o.get('total_a_aportar') or 0):.0f} €"
+                )
+    
+            pick_ix = int(
+                st.selectbox(
+                    "Seleccionar oferta guardada (este inmueble)",
+                    opciones_pick,
+                    format_func=_fmt_oferta_pick,
+                    key=f"entrada_pick_idx_{inv_id}",
+                )
+            )
+    
+        b1, b2 = st.columns(2)
+        with b1:
+            cargar = st.button("Cargar en la simulación", key=f"entrada_btn_cargar_{inv_id}")
+        with b2:
+            borrar = st.button("Eliminar oferta seleccionada", key=f"entrada_btn_borrar_{inv_id}")
+    
+        if cargar:
+            if pick_ix < 0:
+                st.warning("Selecciona una oferta en el desplegable (no solo la línea «Elige una oferta…»).")
+            else:
+                oc = ofertas_inv[pick_ix]
+                st.session_state[f"_entrada_aplicar_oferta_{inv_id}"] = dict(oc)
+                st.rerun()
+    
+        if borrar:
+            if pick_ix < 0:
+                st.warning("Selecciona una oferta para eliminar.")
+            else:
+                oc = ofertas_inv[pick_ix]
+                oid_del = int(oc.get("id") or 0)
+                if oid_del and ghd.eliminar_oferta_compra(usuario_id, oid_del):
+                    st.session_state.pop(k_edit, None)
+                    st.success("Oferta eliminada.")
+                    st.rerun()
+                else:
+                    st.error("No se pudo eliminar (¿token GitHub?).")
+    
     st.markdown("---")
-    st.subheader("Combinaciones de provisiones de fondos (GitHub)")
-    combo_list = st.session_state.get("_aport_combinaciones") or []
-    nom_activa = next(
-        (c["nombre"] for c in combo_list if int(c.get("id", 0) or 0) == int(st.session_state.get("aport_activa_id") or 0)),
-        "—",
-    )
-    st.caption(
-        f"Combinación activa: **{nom_activa}** · {len(combo_list)} combinación(es). "
-        "En el **sidebar** eliges la combinación (la activa se escribe en GitHub al cambiar). "
-        "Aquí puedes **actualizar** la activa con los importes actuales, **crear** otra combinación o **eliminar** la activa."
-    )
-    u1, u2 = st.columns(2)
-    with u1:
-        if st.button("💾 Actualizar combinación activa en GitHub", key="aport_btn_update_github"):
-            _aport_actualizar_combo_activa_desde_session()
-            doc_u = _aport_doc_para_persist()
-            if ghd.guardar_aportacion_efectivo(usuario_id, doc_u):
-                st.success("Combinación activa guardada en GitHub.")
-                st.rerun()
-            else:
-                st.error("No se pudo guardar (¿GITHUB_TOKEN?).")
-    with u2:
-        if len(combo_list) > 1 and st.button("🗑️ Eliminar combinación activa", key="aport_btn_del_github"):
-            aid_del = int(st.session_state.get("aport_activa_id") or 0)
-            combos_d = copy.deepcopy(combo_list)
-            combos_d = [c for c in combos_d if int(c.get("id", 0) or 0) != aid_del]
-            new_a = int(combos_d[0]["id"])
-            doc_d = {"combinaciones": combos_d, "combinacion_activa_id": new_a}
-            if ghd.guardar_aportacion_efectivo(usuario_id, doc_d):
-                st.session_state["_aport_combinaciones"] = combos_d
-                st.session_state["aport_activa_id"] = new_a
-                st.session_state["_aport_pending_combo_ix"] = 0
-                _aport_aplicar_combo_a_session(combos_d[0])
-                st.success("Combinación eliminada.")
-                st.rerun()
-            else:
-                st.error("No se pudo guardar tras eliminar (¿GITHUB_TOKEN?).")
-    with st.form("form_nueva_combo_aportacion"):
-        nombre_nueva = st.text_input("Nombre para nueva combinación", placeholder="Ej. Escenario solo efectivo")
-        if st.form_submit_button("➕ Crear combinación con los valores actuales y guardar en GitHub"):
-            imp_n, inc_n = _aport_snapshot_session()
-            combos_prev = copy.deepcopy(st.session_state.get("_aport_combinaciones") or [])
-            new_id = _next_aport_combo_id(combos_prev)
-            nombre_ok = (nombre_nueva or "").strip() or f"Combinación {new_id}"
-            combos_n = copy.deepcopy(combos_prev)
-            combos_n.append({"id": new_id, "nombre": nombre_ok, "importes": imp_n, "incluir": inc_n})
-            doc_n = {"combinaciones": combos_n, "combinacion_activa_id": new_id}
-            if ghd.guardar_aportacion_efectivo(usuario_id, doc_n):
-                st.session_state["_aport_combinaciones"] = combos_n
-                st.session_state["aport_activa_id"] = new_id
-                st.session_state["_aport_pending_combo_ix"] = len(combos_n) - 1
-                st.success(f"Combinación «{nombre_ok}» creada y guardada.")
-                st.rerun()
-            else:
-                st.error("No se pudo guardar (¿GITHUB_TOKEN?).")
+    with st.expander("➕ Perfiles de provisiones (GitHub)", expanded=False):
+        combo_list = st.session_state.get("_aport_combinaciones") or []
+        nom_activa = next(
+            (c["nombre"] for c in combo_list if int(c.get("id", 0) or 0) == int(st.session_state.get("aport_activa_id") or 0)),
+            "—",
+        )
+        st.caption(
+            f"Combinación activa: **{nom_activa}** · {len(combo_list)} combinación(es). "
+            "En el **sidebar** eliges la combinación (la activa se escribe en GitHub al cambiar). "
+            "Aquí puedes **actualizar** la activa con los importes actuales, **crear** otra combinación o **eliminar** la activa."
+        )
+        u1, u2 = st.columns(2)
+        with u1:
+            if st.button("💾 Actualizar combinación activa en GitHub", key="aport_btn_update_github"):
+                _aport_actualizar_combo_activa_desde_session()
+                doc_u = _aport_doc_para_persist()
+                if ghd.guardar_aportacion_efectivo(usuario_id, doc_u):
+                    st.success("Combinación activa guardada en GitHub.")
+                    st.rerun()
+                else:
+                    st.error("No se pudo guardar (¿GITHUB_TOKEN?).")
+        with u2:
+            if len(combo_list) > 1 and st.button("🗑️ Eliminar combinación activa", key="aport_btn_del_github"):
+                aid_del = int(st.session_state.get("aport_activa_id") or 0)
+                combos_d = copy.deepcopy(combo_list)
+                combos_d = [c for c in combos_d if int(c.get("id", 0) or 0) != aid_del]
+                new_a = int(combos_d[0]["id"])
+                doc_d = {"combinaciones": combos_d, "combinacion_activa_id": new_a}
+                if ghd.guardar_aportacion_efectivo(usuario_id, doc_d):
+                    st.session_state["_aport_combinaciones"] = combos_d
+                    st.session_state["aport_activa_id"] = new_a
+                    st.session_state["_aport_pending_combo_ix"] = 0
+                    _aport_aplicar_combo_a_session(combos_d[0])
+                    st.success("Combinación eliminada.")
+                    st.rerun()
+                else:
+                    st.error("No se pudo guardar tras eliminar (¿GITHUB_TOKEN?).")
+        with st.form("form_nueva_combo_aportacion"):
+            nombre_nueva = st.text_input("Nombre para nueva combinación", placeholder="Ej. Escenario solo efectivo")
+            if st.form_submit_button("➕ Crear combinación con los valores actuales y guardar en GitHub"):
+                imp_n, inc_n = _aport_snapshot_session()
+                combos_prev = copy.deepcopy(st.session_state.get("_aport_combinaciones") or [])
+                new_id = _next_aport_combo_id(combos_prev)
+                nombre_ok = (nombre_nueva or "").strip() or f"Combinación {new_id}"
+                combos_n = copy.deepcopy(combos_prev)
+                combos_n.append({"id": new_id, "nombre": nombre_ok, "importes": imp_n, "incluir": inc_n})
+                doc_n = {"combinaciones": combos_n, "combinacion_activa_id": new_id}
+                if ghd.guardar_aportacion_efectivo(usuario_id, doc_n):
+                    st.session_state["_aport_combinaciones"] = combos_n
+                    st.session_state["aport_activa_id"] = new_id
+                    st.session_state["_aport_pending_combo_ix"] = len(combos_n) - 1
+                    st.success(f"Combinación «{nombre_ok}» creada y guardada.")
+                    st.rerun()
+                else:
+                    st.error("No se pudo guardar (¿GITHUB_TOKEN?).")
 
 
 def _tab_amortizar_o_invertir(usuario_id: int):
@@ -3298,14 +3362,29 @@ def _tab_amortizar_o_invertir(usuario_id: int):
     st.markdown("---")
     diferencia_vs_amort = round(total_acumulado_inv - intereses_ahorrados, 0) if total_acumulado_inv and intereses_ahorrados else 0.0
     if ahorro_neto_amort > beneficio_neto_inv:
-        st.success(f"**En estos datos, sale a cuenta amortizar:** ahorro neto {ahorro_neto_amort:.0f} € frente a beneficio neto por invertir {beneficio_neto_inv:.0f} €.")
+        _ui_insight_card(
+            [
+                f"Ahorro neto por amortizar: {ahorro_neto_amort:.0f} €",
+                f"Beneficio neto por invertir: {beneficio_neto_inv:.0f} €",
+            ],
+            title="En estos datos, sale a cuenta amortizar",
+            tone="success",
+        )
     elif beneficio_neto_inv > ahorro_neto_amort:
-        st.success(
-            f"**En estos datos, sale a cuenta invertir:** beneficio neto {beneficio_neto_inv:.0f} € frente a ahorro por amortizar {ahorro_neto_amort:.0f} €. "
-            f"El total acumulado de la inversión ({total_acumulado_inv:.0f} €) es {diferencia_vs_amort:.0f} € más que los intereses que te ahorrarías amortizando ({intereses_ahorrados:.0f} €)."
+        _ui_insight_card(
+            [
+                f"Beneficio neto por invertir: {beneficio_neto_inv:.0f} € · Ahorro neto por amortizar: {ahorro_neto_amort:.0f} €",
+                f"Total acumulado inversión: {total_acumulado_inv:.0f} € frente a intereses ahorrados amortizando: {intereses_ahorrados:.0f} € (Δ {diferencia_vs_amort:.0f} €)",
+            ],
+            title="En estos datos, sale a cuenta invertir",
+            tone="success",
         )
     else:
-        st.info("Ambas opciones dan un resultado equivalente con los datos introducidos.")
+        _ui_insight_card(
+            ["Ambas opciones dan un resultado equivalente con los datos introducidos."],
+            title="Equilibrio",
+            tone="primary",
+        )
     st.markdown("**Comparativa visual**")
     df_comp = pd.DataFrame(
         {"Neto (€)": [ahorro_neto_amort, beneficio_neto_inv]},
@@ -3322,7 +3401,14 @@ def comparador(usuario_id: int):
     inv_sel = st.session_state.get("inmueble_seleccionado")
     if inv_sel and isinstance(inv_sel, dict):
         coste = _coste_total_inmueble(inv_sel)
-        st.info(f"**Vivienda seleccionada** (sidebar): {inv_sel.get('localizacion', '')} — Coste total compra (con ITP, notaría, registro, gestoría): **{coste:.0f} €**")
+        _ui_insight_card(
+            [
+                (inv_sel.get("localizacion") or "Sin localización").strip(),
+                f"Coste total compra (ITP, notaría, registro, gestoría): {coste:.0f} €",
+            ],
+            title="Vivienda seleccionada (sidebar)",
+            tone="primary",
+        )
     hipotecas = ghd.get_hipotecas(usuario_id)
     st.session_state.hipotecas_cache = hipotecas
     if not hipotecas:
@@ -3466,6 +3552,15 @@ def comparador(usuario_id: int):
 
     elegidas_orden = sorted(elegidas, key=clave_orden)
     mejor = elegidas_orden[0] if elegidas_orden else None
+    if mejor:
+        r0 = resumenes.get(mejor.get("id"), {})
+        criterio_corto = criterio.split("(")[0].strip() if "(" in criterio else criterio
+        lineas_mejor = [
+            f"{mejor.get('nombre_entidad', '')} — {mejor.get('nombre_hipoteca', '')}",
+            f"Criterio: {criterio_corto}",
+            f"TAE {float(mejor.get('tae', 0) or 0):.2f}% · Cuota inicial ≈ {float(r0.get('cuota_inicial', 0) or 0):.0f} € · Coste total (simulación) ≈ {float(r0.get('coste_total', 0) or 0):.0f} €",
+        ]
+        _ui_insight_card(lineas_mejor, title="Mejor opción en esta comparativa", tone="primary")
 
     st.markdown("### Ranking")
     ranking_rows = []
@@ -3587,21 +3682,30 @@ def comparador(usuario_id: int):
                     extra_txt.append(
                         f"Cuota mínima: {cuota_min:.2f} € (↓ {(cuota_base - cuota_min):.2f} €)"
                     )
-                st.info(
-                    f"Con {amort_anual:.0f} €/año, la cuota bajaría aprox. de {cuota_base:.2f} € "
-                    f"a {cuota_y2:.2f} € (a partir del año 2)."
-                    + (("\n\n" + " · ".join(extra_txt)) if extra_txt else "")
-                )
+                lineas_cuota = [
+                    f"Con {amort_anual:.0f} €/año, la cuota bajaría aprox. de {cuota_base:.2f} € a {cuota_y2:.2f} € (a partir del año 2).",
+                ]
+                if extra_txt:
+                    lineas_cuota.append(" · ".join(extra_txt))
+                _ui_insight_card(lineas_cuota, title="Efecto de la amortización extra", tone="primary")
             else:
-                st.info(f"Con {amort_anual:.0f} €/año, la cuota bajaría con el tiempo (ver columna de cuota por año).")
+                _ui_insight_card(
+                    [f"Con {amort_anual:.0f} €/año, la cuota bajaría con el tiempo (ver columna de cuota por año)."],
+                    title="Efecto de la amortización extra",
+                    tone="primary",
+                )
         elif modo_tipo == "reducir_plazo":
             meses_sin_extra = int(anos) * 12
             meses_con_extra = int(sum(r.get('meses_pagados', 0) for r in cuadro))
             ahorro = max(0, meses_sin_extra - meses_con_extra)
-            st.info(
-                f"Con {amort_anual:.0f} €/año manteniendo cuota ({cuota_base:.2f} €), la duración bajaría de "
-                f"{_duracion_str(meses_sin_extra)} a {_duracion_str(meses_con_extra)} "
-                f"(ahorro {_duracion_str(ahorro)})."
+            _ui_insight_card(
+                [
+                    f"Con {amort_anual:.0f} €/año manteniendo cuota ({cuota_base:.2f} €), la duración bajaría de "
+                    f"{_duracion_str(meses_sin_extra)} a {_duracion_str(meses_con_extra)} "
+                    f"(ahorro {_duracion_str(ahorro)}).",
+                ],
+                title="Efecto de la amortización extra",
+                tone="primary",
             )
         else:
             meses_sin_extra = int(anos) * 12
@@ -3617,11 +3721,13 @@ def comparador(usuario_id: int):
                 detalle.append(f"Cuota mínima: {cuota_min:.2f} € (↓ {(cuota_base - cuota_min):.2f} €)")
             if cuota_ultimo is not None and cuota_base:
                 detalle.append(f"Cuota último año: {cuota_ultimo:.2f} € (↓ {(cuota_base - cuota_ultimo):.2f} €)")
-            st.info(
+            lineas_mix = [
                 f"Modo mixto: duración de {_duracion_str(meses_sin_extra)} a {_duracion_str(meses_con_extra)} "
-                f"(ahorro {_duracion_str(ahorro)})."
-                + (("\n\n" + " · ".join(detalle)) if detalle else "")
-            )
+                f"(ahorro {_duracion_str(ahorro)}).",
+            ]
+            if detalle:
+                lineas_mix.append(" · ".join(detalle))
+            _ui_insight_card(lineas_mix, title="Efecto de la amortización extra", tone="primary")
     df = pd.DataFrame(cuadro)
     df = df.rename(columns={
         "año": "Año",
@@ -3724,7 +3830,7 @@ def main():
         help="Se usa para calcular la duración en coche desde cada inmueble y como criterio de ordenación en la agenda.",
     )
 
-    with st.sidebar.expander("💶 Provisiones de fondos", expanded=True):
+    with st.sidebar.expander("➕ Provisiones de fondos", expanded=False):
         combos_sb = st.session_state.get("_aport_combinaciones") or []
         if combos_sb:
             _aport_clamp_combo_ix()
@@ -3815,13 +3921,14 @@ def main():
         "ℹ️ Info",
     ])
     with tab1:
-        formulario_hipoteca(u["id"])
+        with st.expander("➕ Nueva hipoteca", expanded=False):
+            formulario_hipoteca(u["id"])
         st.markdown("---")
         hipotecas = ghd.get_hipotecas(u["id"])
         if hipotecas:
             st.subheader("Hipotecas dadas de alta")
             for h in hipotecas:
-                with st.expander(f"{h.get('nombre_entidad')} — {h.get('nombre_hipoteca')}"):
+                with st.expander(f"✏️ {h.get('nombre_entidad')} — {h.get('nombre_hipoteca')}", expanded=False):
                     logo_path = h.get("logo_path")
                     if logo_path:
                         try:
@@ -3858,6 +3965,7 @@ def main():
         st.subheader("Changelog")
         st.markdown(f"**Versión actual: {VERSION_APP}**")
         st.markdown("""
+        - **1.20.0** — **UI Material 3:** formularios de alta en expanders **➕** (hipotecas, inmuebles, ofertas, perfiles de provisiones); edición en expanders **✏️**; **provisiones** en sidebar colapsadas por defecto; tarjetas de **conclusión** (comparador hipotecas, vivienda seleccionada, comparador inmuebles, amortizar/invertir, efecto amortización extra). Tema y CSS alineados con paleta tipo Android/Material 3.
         - **1.19.5** — **Entrada y gastos:** tras el neto a aportar, **tasación objetivo** (precio simulado ÷ 0,80, supuesto precio = 80% tasación) junto al **valor medio del barrio** de la ficha; rojo y con signo negativo si la tasación orientativa supera esa media, verde si queda por debajo.
         - **1.19.4** — **Gastos de compra:** el % de comisión de la simulación **siempre** puede aplicarse (controles visibles aunque la ficha sea particular); se usa ese % en `gastos_totales`, así la suma incluye comisión cuando el porcentaje es mayor que cero. La línea de suma y la comprobación numérica listan I.T.P., tasas y comisión.
         - **1.19.3** — **Comisión inmobiliaria:** si marcas la casilla extendida, el % se aplica sobre **precio de compra + dinero en efectivo para la compra** (ya no sobre precio + provisiones de fondos). Sigue guardándose en ofertas como `comision_base_incluye_efectivo` (ofertas viejas con la casilla activa usan este criterio al recargar).

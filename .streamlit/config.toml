@@ -1,6 +1,4 @@
-# Hipochorro — Tema profesional (finanzas / comparador hipotecas)
-# Inspirado en guías de diseño: accesibilidad, tipografía clara, contraste
-
+# Hipochorro — Tema Material 3 / Android (superficies tonales, contraste legible)
 [server]
 headless = true
 
@@ -9,26 +7,23 @@ gatherUsageStats = false
 
 [theme]
 base = "light"
-# Tipografía: Plus Jakarta Sans (Google Fonts) — moderna y legible
-font = "Plus Jakarta Sans:https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap"
-headingFont = "Plus Jakarta Sans:https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@600;700&display=swap"
-# Tamaño y peso base
+font = "Roboto Flex:https://fonts.googleapis.com/css2?family=Roboto+Flex:opsz,wght@8..144,400..600&display=swap"
+headingFont = "Roboto Flex:https://fonts.googleapis.com/css2?family=Roboto+Flex:opsz,wght@8..144,500..700&display=swap"
 baseFontSize = "16px"
 baseFontWeight = "400"
-# Bordes suaves (nombres válidos en Streamlit actual)
-baseRadius = "0.5rem"
-buttonRadius = "0.5rem"
+baseRadius = "1rem"
+buttonRadius = "1.5rem"
 
 [theme.light]
-primaryColor = "#0d47a1"
-backgroundColor = "#f8fafc"
-secondaryBackgroundColor = "#ffffff"
-textColor = "#1e293b"
-borderColor = "#e2e8f0"
+primaryColor = "#6750A4"
+backgroundColor = "#FEF7FF"
+secondaryBackgroundColor = "#F3EDF7"
+textColor = "#1C1B1F"
+borderColor = "#CAC4D0"
 
 [theme.dark]
-primaryColor = "#64b5f6"
-backgroundColor = "#0f172a"
-secondaryBackgroundColor = "#1e293b"
-textColor = "#f1f5f9"
-borderColor = "#334155"
+primaryColor = "#D0BCFF"
+backgroundColor = "#1C1B1F"
+secondaryBackgroundColor = "#2B2930"
+textColor = "#E6E1E5"
+borderColor = "#938F99"
