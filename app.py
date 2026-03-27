@@ -70,7 +70,7 @@ HELP_TAE = (
 APIFY_TOKEN_SECRET = "APIFY_TOKEN_SECRET"
 
 # Versión de la aplicación (visible en sidebar y changelog)
-VERSION_APP = "1.20.5"
+VERSION_APP = "1.20.6"
 
 # Gastos de compra (sobre precio de la vivienda / ITP)
 ITP_PCT = 7.0           # Impuesto de Transmisiones Patrimoniales: % sobre precio vivienda
@@ -2374,17 +2374,115 @@ def _aport_clamp_combo_ix() -> None:
 
 
 def _aport_flush_pending_combo_ix() -> None:
-    """Aplica el índice de combinación pendiente antes del selectbox del sidebar.
+    """Aplica el índice de perfil pendiente antes del `selectbox` de perfiles en la pestaña.
 
     Streamlit no permite asignar a la key de un widget después de instanciarlo;
-    la pestaña «Entrada y gastos» corre después del sidebar, así que crear/eliminar
-    combinación debe dejar el índice en `_aport_pending_combo_ix` y aplicarlo aquí.
+    al crear o eliminar un perfil se deja el índice en `_aport_pending_combo_ix` y se consume aquí.
     """
     if "_aport_pending_combo_ix" not in st.session_state:
         return
     v = int(st.session_state.pop("_aport_pending_combo_ix"))
     st.session_state["aport_combo_ix"] = v
     st.session_state["_aport_applied_combo_ix"] = v
+
+
+def _ui_aportacion_fondos_entrada_tab(usuario_id: int) -> None:
+    """Único desplegable ➕ ✏️ para perfiles, importes e Incluir (no duplicar widgets fuera de esta pestaña)."""
+    with st.expander("➕ ✏️ Provisiones de fondos (perfiles en GitHub)", expanded=False):
+        combo_list = st.session_state.get("_aport_combinaciones") or []
+        nom_activa = next(
+            (
+                c["nombre"]
+                for c in combo_list
+                if int(c.get("id", 0) or 0) == int(st.session_state.get("aport_activa_id") or 0)
+            ),
+            "—",
+        )
+        st.caption(
+            f"Perfil activo: **{nom_activa}** · {len(combo_list)} perfil(es). "
+            "Cambia de perfil para cargar otro escenario; edita importes y **Incluir**; "
+            "**Guardar cambios** actualiza el perfil activo en GitHub y **Guardar como nuevo perfil** crea otro."
+        )
+        if combo_list:
+            _aport_clamp_combo_ix()
+            st.selectbox(
+                "Perfil (escenarios en GitHub)",
+                list(range(len(combo_list))),
+                format_func=lambda i: combo_list[i]["nombre"],
+                key="aport_combo_ix",
+                help="Al cambiar, se cargan esos importes y se marca en GitHub cuál está activo.",
+            )
+            ix_cur = int(st.session_state.get("aport_combo_ix", 0) or 0)
+            last_ap = st.session_state.get("_aport_applied_combo_ix", -999)
+            if ix_cur != last_ap:
+                st.session_state["aport_activa_id"] = int(combo_list[ix_cur]["id"])
+                _aport_aplicar_combo_a_session(combo_list[ix_cur])
+                st.session_state["_aport_applied_combo_ix"] = ix_cur
+                ghd.guardar_aportacion_efectivo(usuario_id, _aport_doc_para_persist())
+                st.rerun()
+        else:
+            st.caption("Sin perfiles; recarga la página tras iniciar sesión.")
+
+        for k_ap, lbl_ap in PROVISIONES_FONDOS_CONCEPTOS:
+            r1, r2 = st.columns([5, 2])
+            with r1:
+                st.number_input(lbl_ap, min_value=0.0, step=100.0, key=f"aport_imp_{k_ap}")
+            with r2:
+                st.checkbox(
+                    "Incluir",
+                    key=f"aport_inc_{k_ap}",
+                    help=f"Cuenta «{lbl_ap}» en la suma que resta del neto a aportar",
+                )
+
+        tot_tab, _ = _sum_efectivo_aportacion()
+        st.caption(f"Suma provisiones incluidas: **{tot_tab:.0f} €** (se aplican en el **resumen** de arriba).")
+
+        st.markdown("**Guardar en GitHub**")
+        u1, u2 = st.columns(2)
+        with u1:
+            if st.button("💾 Guardar cambios (perfil activo en GitHub)", key="aport_btn_update_github"):
+                _aport_actualizar_combo_activa_desde_session()
+                doc_u = _aport_doc_para_persist()
+                if ghd.guardar_aportacion_efectivo(usuario_id, doc_u):
+                    st.success("Perfil activo guardado en GitHub.")
+                    st.rerun()
+                else:
+                    st.error("No se pudo guardar (¿GITHUB_TOKEN?).")
+        with u2:
+            if len(combo_list) > 1 and st.button("🗑️ Eliminar perfil activo", key="aport_btn_del_github"):
+                aid_del = int(st.session_state.get("aport_activa_id") or 0)
+                combos_d = copy.deepcopy(combo_list)
+                combos_d = [c for c in combos_d if int(c.get("id", 0) or 0) != aid_del]
+                new_a = int(combos_d[0]["id"])
+                doc_d = {"combinaciones": combos_d, "combinacion_activa_id": new_a}
+                if ghd.guardar_aportacion_efectivo(usuario_id, doc_d):
+                    st.session_state["_aport_combinaciones"] = combos_d
+                    st.session_state["aport_activa_id"] = new_a
+                    st.session_state["_aport_pending_combo_ix"] = 0
+                    _aport_aplicar_combo_a_session(combos_d[0])
+                    st.success("Perfil eliminado.")
+                    st.rerun()
+                else:
+                    st.error("No se pudo guardar tras eliminar (¿GITHUB_TOKEN?).")
+
+        with st.form("form_nueva_combo_aportacion"):
+            nombre_nueva = st.text_input("Nombre para el nuevo perfil", placeholder="Ej. Escenario solo efectivo")
+            if st.form_submit_button("➕ Guardar como nuevo perfil y activarlo en GitHub"):
+                imp_n, inc_n = _aport_snapshot_session()
+                combos_prev = copy.deepcopy(st.session_state.get("_aport_combinaciones") or [])
+                new_id = _next_aport_combo_id(combos_prev)
+                nombre_ok = (nombre_nueva or "").strip() or f"Perfil {new_id}"
+                combos_n = copy.deepcopy(combos_prev)
+                combos_n.append({"id": new_id, "nombre": nombre_ok, "importes": imp_n, "incluir": inc_n})
+                doc_n = {"combinaciones": combos_n, "combinacion_activa_id": new_id}
+                if ghd.guardar_aportacion_efectivo(usuario_id, doc_n):
+                    st.session_state["_aport_combinaciones"] = combos_n
+                    st.session_state["aport_activa_id"] = new_id
+                    st.session_state["_aport_pending_combo_ix"] = len(combos_n) - 1
+                    st.success(f"Perfil «{nombre_ok}» creado y guardado.")
+                    st.rerun()
+                else:
+                    st.error("No se pudo guardar (¿GITHUB_TOKEN?).")
 
 
 def _sync_aportacion_usuario(usuario_id: int) -> None:
@@ -2638,7 +2736,7 @@ def _aplicar_payload_oferta_entrada_a_session(pend_oferta: dict, inv_id: int, in
 
 
 def _flush_pending_entrada_oferta_antes_sidebar(usuario_id: int) -> None:
-    """Consume _entrada_aplicar_oferta_* antes de los widgets del sidebar (aport_imp_*/aport_inc_*)."""
+    """Consume _entrada_aplicar_oferta_* antes de los widgets de provisiones en la pestaña (aport_imp_*/aport_inc_*)."""
     hipotecas = ghd.get_hipotecas(usuario_id)
     if not hipotecas:
         return
@@ -2746,8 +2844,8 @@ def _tab_entrada_gastos_financiacion(usuario_id: int):
     precio_ficha = float(inv.get("importe", 0) or 0)
 
     # Cargar oferta: `_entrada_aplicar_oferta_{id}` se aplica en main() con
-    # `_flush_pending_entrada_oferta_antes_sidebar` (antes del sidebar), porque `aport_imp_*`/`aport_inc_*`
-    # no pueden asignarse tras instanciar esos widgets.
+    # `_flush_pending_entrada_oferta_antes_sidebar` (antes de la pestaña), porque `aport_imp_*`/`aport_inc_*`
+    # no pueden asignarse tras instanciar esos widgets en «Provisiones de fondos».
     k_nombre = f"entrada_nombre_oferta_{inv_id}"
     k_notas = f"entrada_notas_oferta_{inv_id}"
     k_estado = f"entrada_estado_oferta_{inv_id}"
@@ -2885,16 +2983,7 @@ def _tab_entrada_gastos_financiacion(usuario_id: int):
         if not inv.get("inmobiliaria") and pct_comision_sim <= 0:
             st.caption("Ficha **particular**: el % suele ser 0; si subes el %, la comisión **sí entra** en la suma de gastos de compra.")
 
-        st.markdown(
-            '<p style="border-left:4px solid #15803d;padding:10px 14px;background:rgba(21,128,61,0.08);border-radius:8px;margin:16px 0 8px 0;">'
-            '<strong style="color:#166534">Provisiones de fondos</strong> '
-            "<span style=\"color:#64748b\">— entran a favor y reducen el dinero neto que falta por aportar</span></p>",
-            unsafe_allow_html=True,
-        )
-        st.caption(
-            "Los **importes** y las casillas **Incluir** están en el **sidebar** (desplegable *Provisiones de fondos*). "
-            "Cada **perfil** guardado en GitHub conserva esos valores; cambia de perfil en el sidebar para comparar escenarios."
-        )
+    _ui_aportacion_fondos_entrada_tab(usuario_id)
 
     precio_compra = float(st.session_state[k_precio])
     pct_financiacion = float(st.session_state[k_pct])
@@ -3173,8 +3262,8 @@ def _tab_entrada_gastos_financiacion(usuario_id: int):
         '<div style="padding:12px 14px;background:rgba(21,128,61,0.1);border-radius:8px;border-left:4px solid #15803d;margin-bottom:12px;">'
         f'<strong style="color:#166534">Provisiones activas (ahora):</strong> '
         f'<span style="font-size:1.1em">{provisiones_total:,.0f} €</span><br/>'
-        f'<span style="color:#64748b;font-size:0.95em">Perfil «{html.escape(str(nom_combo_cov))}» en GitHub (sidebar). '
-        "Si pulsas «Actualizar perfil» al pie de esta pestaña, recuperas estos importes en otra sesión.</span></div>",
+        f'<span style="color:#64748b;font-size:0.95em">Perfil «{html.escape(str(nom_combo_cov))}» en GitHub. '
+        "Con **Guardar cambios** en el desplegable **➕ ✏️ Provisiones de fondos** persistes los importes actuales.</span></div>",
         unsafe_allow_html=True,
     )
     st.caption(
@@ -3210,7 +3299,7 @@ def _tab_entrada_gastos_financiacion(usuario_id: int):
                 }
             )
         st.dataframe(pd.DataFrame(res_rows), hide_index=True, use_container_width=True)
-        with st.expander("Barras de progreso por oferta (detalle visual)", expanded=False):
+        with st.expander("➕ ✏️ Barras de progreso por oferta (detalle visual)", expanded=False):
             for o in ofertas_tabla:
                 br = _bruto_necesario_oferta_guardada(o)
                 gg = float(o.get("gastos_totales_compra") or 0)
@@ -3218,7 +3307,7 @@ def _tab_entrada_gastos_financiacion(usuario_id: int):
                 _render_bloque_cobertura(tit, br, gg, provisiones_total)
 
     st.markdown("---")
-    with st.expander("➕ Ofertas de compra y seguimiento", expanded=False):
+    with st.expander("➕ ✏️ Ofertas de compra y seguimiento", expanded=False):
         st.caption(
             "Pon nombre y estado. **Guardar cambios** actualiza la oferta cargada o seleccionada; **Guardar como nuevo** crea otro registro en GitHub "
             "(útil para contraofertas sin pisar la anterior). Requiere `GITHUB_TOKEN`."
@@ -3440,63 +3529,6 @@ def _tab_entrada_gastos_financiacion(usuario_id: int):
                     st.rerun()
                 else:
                     st.error("No se pudo eliminar (¿token GitHub?).")
-    
-    st.markdown("---")
-    with st.expander("➕ Perfiles de provisiones (GitHub)", expanded=False):
-        combo_list = st.session_state.get("_aport_combinaciones") or []
-        nom_activa = next(
-            (c["nombre"] for c in combo_list if int(c.get("id", 0) or 0) == int(st.session_state.get("aport_activa_id") or 0)),
-            "—",
-        )
-        st.caption(
-            f"Combinación activa: **{nom_activa}** · {len(combo_list)} perfil(es). "
-            "En el **sidebar** eliges el perfil (la activa se escribe en GitHub al cambiar). "
-            "Aquí **Guardar cambios** persiste el perfil activo y **Guardar como nuevo perfil** crea otro; también puedes **eliminar** el activo."
-        )
-        u1, u2 = st.columns(2)
-        with u1:
-            if st.button("💾 Guardar cambios (perfil activo en GitHub)", key="aport_btn_update_github"):
-                _aport_actualizar_combo_activa_desde_session()
-                doc_u = _aport_doc_para_persist()
-                if ghd.guardar_aportacion_efectivo(usuario_id, doc_u):
-                    st.success("Combinación activa guardada en GitHub.")
-                    st.rerun()
-                else:
-                    st.error("No se pudo guardar (¿GITHUB_TOKEN?).")
-        with u2:
-            if len(combo_list) > 1 and st.button("🗑️ Eliminar combinación activa", key="aport_btn_del_github"):
-                aid_del = int(st.session_state.get("aport_activa_id") or 0)
-                combos_d = copy.deepcopy(combo_list)
-                combos_d = [c for c in combos_d if int(c.get("id", 0) or 0) != aid_del]
-                new_a = int(combos_d[0]["id"])
-                doc_d = {"combinaciones": combos_d, "combinacion_activa_id": new_a}
-                if ghd.guardar_aportacion_efectivo(usuario_id, doc_d):
-                    st.session_state["_aport_combinaciones"] = combos_d
-                    st.session_state["aport_activa_id"] = new_a
-                    st.session_state["_aport_pending_combo_ix"] = 0
-                    _aport_aplicar_combo_a_session(combos_d[0])
-                    st.success("Combinación eliminada.")
-                    st.rerun()
-                else:
-                    st.error("No se pudo guardar tras eliminar (¿GITHUB_TOKEN?).")
-        with st.form("form_nueva_combo_aportacion"):
-            nombre_nueva = st.text_input("Nombre para nueva combinación", placeholder="Ej. Escenario solo efectivo")
-            if st.form_submit_button("➕ Guardar como nuevo perfil y activarlo en GitHub"):
-                imp_n, inc_n = _aport_snapshot_session()
-                combos_prev = copy.deepcopy(st.session_state.get("_aport_combinaciones") or [])
-                new_id = _next_aport_combo_id(combos_prev)
-                nombre_ok = (nombre_nueva or "").strip() or f"Combinación {new_id}"
-                combos_n = copy.deepcopy(combos_prev)
-                combos_n.append({"id": new_id, "nombre": nombre_ok, "importes": imp_n, "incluir": inc_n})
-                doc_n = {"combinaciones": combos_n, "combinacion_activa_id": new_id}
-                if ghd.guardar_aportacion_efectivo(usuario_id, doc_n):
-                    st.session_state["_aport_combinaciones"] = combos_n
-                    st.session_state["aport_activa_id"] = new_id
-                    st.session_state["_aport_pending_combo_ix"] = len(combos_n) - 1
-                    st.success(f"Combinación «{nombre_ok}» creada y guardada.")
-                    st.rerun()
-                else:
-                    st.error("No se pudo guardar (¿GITHUB_TOKEN?).")
 
 
 def _tab_amortizar_o_invertir(usuario_id: int):
@@ -4037,43 +4069,20 @@ def main():
         help="Se usa para calcular la duración en coche desde cada inmueble y como criterio de ordenación en la agenda.",
     )
 
-    with st.sidebar.expander("➕ Provisiones de fondos", expanded=False):
-        combos_sb = st.session_state.get("_aport_combinaciones") or []
-        if combos_sb:
-            _aport_clamp_combo_ix()
-            st.selectbox(
-                "Perfil (escenarios distintos en GitHub)",
-                list(range(len(combos_sb))),
-                format_func=lambda i: combos_sb[i]["nombre"],
-                key="aport_combo_ix",
-                help="Cada perfil guarda los seis importes y qué conceptos están incluidos en la suma. "
-                "Al cambiar, se cargan esos valores y se actualiza en GitHub cuál está activo.",
-            )
-            ix_sb = int(st.session_state.get("aport_combo_ix", 0) or 0)
-            last_sb = st.session_state.get("_aport_applied_combo_ix", -999)
-            if ix_sb != last_sb:
-                st.session_state["aport_activa_id"] = int(combos_sb[ix_sb]["id"])
-                _aport_aplicar_combo_a_session(combos_sb[ix_sb])
-                st.session_state["_aport_applied_combo_ix"] = ix_sb
-                ghd.guardar_aportacion_efectivo(u["id"], _aport_doc_para_persist())
-                st.rerun()
-        else:
-            st.caption("Sin perfiles; recarga tras iniciar sesión.")
-        st.caption(
-            "Importes y **Incluir** del perfil activo: pulsa **Actualizar perfil** en *Entrada y gastos* para guardarlos en GitHub."
-        )
-        for k_ap, lbl_ap in PROVISIONES_FONDOS_CONCEPTOS:
-            r1, r2 = st.columns([5, 2])
-            with r1:
-                st.number_input(lbl_ap, min_value=0.0, step=100.0, key=f"aport_imp_{k_ap}")
-            with r2:
-                st.checkbox(
-                    "Incluir",
-                    key=f"aport_inc_{k_ap}",
-                    help=f"Cuenta «{lbl_ap}» en la suma que resta del neto a aportar",
-                )
-        tot_sidebar, _ = _sum_efectivo_aportacion()
-        st.caption(f"Suma provisiones incluidas: **{tot_sidebar:.0f} €** (bloque verde en *Entrada y gastos*)")
+    combos_sb_hint = st.session_state.get("_aport_combinaciones") or []
+    nom_ap_hint = next(
+        (
+            c["nombre"]
+            for c in combos_sb_hint
+            if int(c.get("id", 0) or 0) == int(st.session_state.get("aport_activa_id") or 0)
+        ),
+        "—",
+    )
+    tot_ap_hint, _ = _sum_efectivo_aportacion()
+    st.sidebar.caption(
+        f"**Provisiones de fondos:** **{tot_ap_hint:.0f} €** incluidas · perfil «{nom_ap_hint}». "
+        "Edición en **Entrada y gastos** → **➕ ✏️ Provisiones de fondos**."
+    )
 
     # Selector de inmueble: Interesados (verde) primero, separador, En Estudio (azul)
     inmuebles = ghd.get_inmuebles(u["id"])
@@ -4228,6 +4237,7 @@ def main():
         st.subheader("Changelog")
         st.markdown(f"**Versión actual: {VERSION_APP}**")
         st.markdown("""
+        - **1.20.6** — **Entrada y gastos:** un solo desplegable **➕ ✏️ Provisiones de fondos** (selector de perfil, importes, Incluir, **Guardar cambios**, **Guardar como nuevo perfil**, eliminar). Eliminada la duplicación con el sidebar (ahí solo resumen + enlace). Ofertas y barras de cobertura con título **➕ ✏️**. Orden: parámetros → provisiones → resumen.
         - **1.20.5** — **Desplegables alta/edición:** textos unificados **Guardar cambios** vs **Guardar como nuevo** (ofertas de compra, perfiles de provisiones en GitHub, alta hipoteca/inmueble). En ofertas, **Guardar cambios** a la izquierda (solo con oferta cargada/seleccionada).
         - **1.20.4** — **Entrada y gastos:** parámetros (precio, gastos, gestoría) dentro del expander ➕✏️; gestoría a ancho completo con ayuda al **importe por defecto** (`GESTORIA_EUR`). **Ofertas:** al seleccionar en el desplegable se aplica la oferta y se refresca el resumen (igual que «Cargar»).
         - **1.20.3** — **Corrección Streamlit Cloud:** al cargar una oferta en «Entrada y gastos», los importes de provisiones se aplican en `main()` **antes** del sidebar (no en la pestaña), evitando `StreamlitAPIException` al asignar `aport_imp_*`/`aport_inc_*` cuando esos widgets ya existen.
