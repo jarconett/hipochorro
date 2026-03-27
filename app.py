@@ -70,10 +70,12 @@ HELP_TAE = (
 APIFY_TOKEN_SECRET = "APIFY_TOKEN_SECRET"
 
 # Versión de la aplicación (visible en sidebar y changelog)
-VERSION_APP = "1.19.4"
+VERSION_APP = "1.19.5"
 
 # Gastos de compra (sobre precio de la vivienda / ITP)
 ITP_PCT = 7.0           # Impuesto de Transmisiones Patrimoniales: % sobre precio vivienda
+# Supuesto banco (orientativo en «Entrada y gastos»): precio de compra = este % del valor de tasación
+PRECIO_COMPRA_FRACCION_TASACION = 0.8
 
 # Estados de seguimiento de ofertas de compra (valor guardado → etiqueta UI)
 ESTADOS_OFERTA_COMPRA = [
@@ -2782,6 +2784,62 @@ def _tab_entrada_gastos_financiacion(usuario_id: int):
             f'<div style="font-size:1.5rem;font-weight:600;color:{color_neto};">{html.escape(texto_neto)}</div></div>',
             unsafe_allow_html=True,
         )
+
+    valor_medio_barrio = float(inv.get("valor_medio_barrio", 0) or 0)
+    tasacion_objetivo = (
+        (precio_compra / PRECIO_COMPRA_FRACCION_TASACION) if precio_compra > 0 else 0.0
+    )
+    col_tas_l, col_tas_r = st.columns(2)
+    with col_tas_l:
+        st.markdown(
+            '<div style="font-size:0.875rem;color:rgba(49,51,63,0.6);margin-bottom:0.25rem;">'
+            "Tasación objetivo (si el banco exige que el precio sea el <strong>80%</strong> de la tasación)</div>",
+            unsafe_allow_html=True,
+        )
+        if precio_compra <= 0:
+            t_txt, t_col = "—", "#64748b"
+        elif valor_medio_barrio <= 0:
+            t_txt, t_col = f"{tasacion_objetivo:.0f} €", "#64748b"
+        elif tasacion_objetivo > valor_medio_barrio:
+            t_txt, t_col = f"-{tasacion_objetivo:.0f} €", "#b91c1c"
+        elif tasacion_objetivo < valor_medio_barrio:
+            t_txt, t_col = f"{tasacion_objetivo:.0f} €", "#15803d"
+        else:
+            t_txt, t_col = f"{tasacion_objetivo:.0f} €", "#64748b"
+        st.markdown(
+            f'<div style="font-size:1.35rem;font-weight:600;color:{t_col};">{html.escape(t_txt)}</div>',
+            unsafe_allow_html=True,
+        )
+        st.caption(
+            f"Orientativo: precio de compra simulado ÷ {PRECIO_COMPRA_FRACCION_TASACION:.2f} "
+            f"({PRECIO_COMPRA_FRACCION_TASACION:.0%} del valor de tasación)."
+        )
+    with col_tas_r:
+        st.markdown(
+            '<div style="font-size:0.875rem;color:rgba(49,51,63,0.6);margin-bottom:0.25rem;">'
+            "Valor medio viviendas del barrio (€) — ficha del inmueble</div>",
+            unsafe_allow_html=True,
+        )
+        if valor_medio_barrio > 0:
+            st.markdown(
+                f'<div style="font-size:1.35rem;font-weight:600;color:#334155;">{html.escape(f"{valor_medio_barrio:.0f} €")}</div>',
+                unsafe_allow_html=True,
+            )
+        else:
+            st.markdown(
+                '<div style="font-size:1rem;color:#94a3b8;">— (sin dato en ficha)</div>',
+                unsafe_allow_html=True,
+            )
+    if precio_compra > 0 and valor_medio_barrio <= 0:
+        st.caption("Rellena **Valor medio viviendas del barrio** en la ficha del inmueble para ver verde/rojo según la comparación con la tasación objetivo.")
+    elif precio_compra > 0 and valor_medio_barrio > 0:
+        if tasacion_objetivo > valor_medio_barrio:
+            st.caption(
+                "La tasación orientativa supera la **media del barrio** de la ficha (contexto más exigente para la valoración)."
+            )
+        elif tasacion_objetivo < valor_medio_barrio:
+            st.caption("La tasación orientativa queda **por debajo** de la media del barrio indicada en la ficha.")
+
     st.caption(f"Hipoteca: {h.get('nombre_entidad','')} — {h.get('nombre_hipoteca','')}")
     st.markdown(
         f'<p style="margin:6px 0 0 0;"><span style="color:#15803d;font-weight:600">Provisiones incluidas:</span> '
@@ -3800,6 +3858,7 @@ def main():
         st.subheader("Changelog")
         st.markdown(f"**Versión actual: {VERSION_APP}**")
         st.markdown("""
+        - **1.19.5** — **Entrada y gastos:** tras el neto a aportar, **tasación objetivo** (precio simulado ÷ 0,80, supuesto precio = 80% tasación) junto al **valor medio del barrio** de la ficha; rojo y con signo negativo si la tasación orientativa supera esa media, verde si queda por debajo.
         - **1.19.4** — **Gastos de compra:** el % de comisión de la simulación **siempre** puede aplicarse (controles visibles aunque la ficha sea particular); se usa ese % en `gastos_totales`, así la suma incluye comisión cuando el porcentaje es mayor que cero. La línea de suma y la comprobación numérica listan I.T.P., tasas y comisión.
         - **1.19.3** — **Comisión inmobiliaria:** si marcas la casilla extendida, el % se aplica sobre **precio de compra + dinero en efectivo para la compra** (ya no sobre precio + provisiones de fondos). Sigue guardándose en ofertas como `comision_base_incluye_efectivo` (ofertas viejas con la casilla activa usan este criterio al recargar).
         - **1.19.2** — **Provisiones de fondos:** los **perfiles** guardados en GitHub (antes «combinaciones») son escenarios distintos de importes + Incluir; **selector y edición** en el **sidebar**; la pestaña *Entrada y gastos* conserva actualizar / crear / eliminar perfil. Mismo JSON en `data/aportacion_efectivo/`.
