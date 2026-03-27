@@ -1,3 +1,46 @@
 {
-  "ofertas": []
+  "ofertas": [
+    {
+      "inmueble_id": 3,
+      "hipoteca_id": 2,
+      "nombre": "Contraoferta Poleo 270k+24k 2%inmo",
+      "precio_compra": 270000.0,
+      "notaria": 1000.0,
+      "registro": 600.0,
+      "gestoria": 300.0,
+      "efectivo_para_compra": 24000.0,
+      "provisiones_total": 85000.0,
+      "total_bruto_antes_provisiones": 77680.0,
+      "efectivo_adicional": 85000.0,
+      "efectivo_por_concepto": {
+        "magdalena": 15000.0,
+        "javier": 10000.0,
+        "efectivo_marta": 10000.0,
+        "alberto": 20000.0,
+        "irene": 20000.0,
+        "efectivo_irene": 10000.0
+      },
+      "efectivo_incluir_conceptos": {
+        "magdalena": true,
+        "javier": true,
+        "efectivo_marta": true,
+        "alberto": true,
+        "irene": true,
+        "efectivo_irene": true
+      },
+      "pct_financiacion": 90.0,
+      "comision_base_incluye_efectivo": true,
+      "estado": "contraoferta",
+      "notas": "",
+      "itp": 18900.0,
+      "comision_inmobiliaria_pct": 2.0,
+      "comision_inmobiliaria": 5880.0,
+      "gastos_totales_compra": 50680.0,
+      "entrada_compra": 27000.0,
+      "total_a_aportar": -7320.0,
+      "fecha_actualizado": "2026-03-27T00:20:58",
+      "fecha_creado": "2026-03-27T00:20:58",
+      "id": 1
+    }
+  ]
 }
