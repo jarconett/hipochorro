@@ -85,7 +85,8 @@
       "fecha_creacion": "2026-03-08T12:59:04.003070",
       "id": 3,
       "horas_luz_anual": true,
-      "aseo": 0
+      "aseo": 0,
+      "valor_medio_barrio": 322746.0
     }
   ]
 }
