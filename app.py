@@ -2387,13 +2387,17 @@ def _aport_flush_pending_combo_ix() -> None:
 
 
 def _aport_sidebar_selector_perfil(usuario_id: int) -> None:
-    """Selector de perfil de provisiones en el sidebar (misma key que antes en pestaña; sin duplicar)."""
+    """Selector de perfil de provisiones dentro del expander del sidebar.
+
+    Debe llamarse solo bajo `with st.sidebar.expander(...)`: aquí se usa `st.*`, no `st.sidebar.*`,
+    para que selectbox y desglose queden anidados en el expander (si no, Streamlit los pinta fuera y el expander queda vacío).
+    """
     combo_list = st.session_state.get("_aport_combinaciones") or []
     if not combo_list:
-        st.sidebar.caption("Sin perfiles; crea uno en *Entrada y gastos*.")
+        st.caption("Sin perfiles; crea uno en *Entrada y gastos*.")
         return
     _aport_clamp_combo_ix()
-    st.sidebar.selectbox(
+    st.selectbox(
         "Perfil provisiones (simulaciones)",
         list(range(len(combo_list))),
         format_func=lambda i: combo_list[i]["nombre"],
@@ -2410,17 +2414,17 @@ def _aport_sidebar_selector_perfil(usuario_id: int) -> None:
         st.rerun()
 
     tot_sb, des_sb = _sum_efectivo_aportacion()
-    st.sidebar.markdown(
+    st.markdown(
         '<span style="color:#15803d;font-weight:600;font-size:0.88rem;">Desglose provisiones (€)</span>',
         unsafe_allow_html=True,
     )
     for lbl, (v_ef, inc_ef) in des_sb.items():
         suf = "" if inc_ef else " — <em>no incluida en la suma</em>"
-        st.sidebar.markdown(
+        st.markdown(
             f'<p style="color:#166534;margin:0.12em 0;font-size:0.85rem;">· {html.escape(lbl)}: {v_ef:,.0f} €{suf}</p>',
             unsafe_allow_html=True,
         )
-    st.sidebar.caption(f"Total **incluido** en la simulación: **{tot_sb:,.0f} €**")
+    st.caption(f"Total **incluido** en la simulación: **{tot_sb:,.0f} €**")
 
 
 def _ui_aportacion_fondos_entrada_tab(usuario_id: int) -> None:
