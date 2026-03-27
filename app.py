@@ -2822,7 +2822,7 @@ def _tab_entrada_gastos_financiacion(usuario_id: int):
         )
         if valor_medio_barrio > 0:
             st.markdown(
-                f'<div style="font-size:1.35rem;font-weight:600;color:#334155;">{html.escape(f"{valor_medio_barrio:.0f} €")}</div>',
+                f'<div style="font-size:1.35rem;font-weight:600;color:rgba(93,158,134,0.6);">{html.escape(f"{valor_medio_barrio:.0f} €")}</div>',
                 unsafe_allow_html=True,
             )
         else:
