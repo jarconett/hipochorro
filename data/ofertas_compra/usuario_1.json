@@ -1,28 +1,6 @@
 {
   "ofertas": [
     {
-      "inmueble_id": 1,
-      "hipoteca_id": 2,
-      "nombre": "primera oferta poleo 12",
-      "precio_compra": 260000.0,
-      "notaria": 1000.0,
-      "registro": 600.0,
-      "gestoria": 300.0,
-      "efectivo_adicional": 20000.0,
-      "pct_financiacion": 90.0,
-      "estado": "borrador",
-      "notas": "",
-      "itp": 18200.0,
-      "comision_inmobiliaria_pct": 2.5,
-      "comision_inmobiliaria": 6500.0,
-      "gastos_totales_compra": 26600.0,
-      "entrada_compra": 26000.0,
-      "total_a_aportar": 72600.0,
-      "fecha_actualizado": "2026-03-20T18:15:18",
-      "fecha_creado": "2026-03-20T18:15:18",
-      "id": 1
-    },
-    {
       "inmueble_id": 3,
       "hipoteca_id": 2,
       "nombre": "Contraoferta 294k",
