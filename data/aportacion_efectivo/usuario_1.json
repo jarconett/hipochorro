@@ -5,17 +5,19 @@
       "nombre": "Por defecto",
       "importes": {
         "magdalena": 0.0,
-        "alberto": 0.0,
         "javier": 0.0,
+        "efectivo_marta": 0.0,
+        "alberto": 0.0,
         "irene": 0.0,
-        "efectivo": 0.0
+        "efectivo_irene": 0.0
       },
       "incluir": {
         "magdalena": true,
-        "alberto": true,
         "javier": true,
+        "efectivo_marta": true,
+        "alberto": true,
         "irene": true,
-        "efectivo": true
+        "efectivo_irene": true
       }
     },
     {
@@ -23,18 +25,18 @@
       "nombre": "maximo",
       "importes": {
         "magdalena": 15000.0,
-        "alberto": 0.0,
-        "javier": 14000.0,
-        "irene": 20000.0,
-        "efectivo_marta": 10000.0,
+        "javier": 10000.0,
+        "efectivo_marta": 5000.0,
+        "alberto": 20000.0,
+        "irene": 35000.0,
         "efectivo_irene": 10000.0
       },
       "incluir": {
         "magdalena": true,
-        "alberto": true,
         "javier": true,
-        "irene": true,
         "efectivo_marta": true,
+        "alberto": true,
+        "irene": true,
         "efectivo_irene": true
       }
     }
