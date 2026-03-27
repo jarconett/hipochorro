@@ -70,7 +70,7 @@ HELP_TAE = (
 APIFY_TOKEN_SECRET = "APIFY_TOKEN_SECRET"
 
 # Versión de la aplicación (visible en sidebar y changelog)
-VERSION_APP = "1.20.4"
+VERSION_APP = "1.20.5"
 
 # Gastos de compra (sobre precio de la vivienda / ITP)
 ITP_PCT = 7.0           # Impuesto de Transmisiones Patrimoniales: % sobre precio vivienda
@@ -937,7 +937,7 @@ def _campo_comision(label: str, value: float = 0.0, min_value: float = 0.0, step
 
 def formulario_hipoteca(usuario_id: int):
     """Formulario de alta de hipoteca con todos los campos."""
-    st.caption("Rellena los datos y pulsa **Guardar hipoteca** al final del formulario.")
+    st.caption("Rellena los datos y pulsa **Guardar como nueva hipoteca** al final del formulario.")
     inv_sel = st.session_state.get("inmueble_seleccionado")
     def_valor = 150000.0
     def_cantidad = 150000.0
@@ -998,7 +998,7 @@ def formulario_hipoteca(usuario_id: int):
         bonif_tin_tarjeta_pp = _campo_bonificacion("Bonif. TIN por tarjeta (p.p.)", value=0.0, step=0.05, format_str="%.2f", key="f_tarb")
         anos_bonif_tarjeta = _campo_bonificacion("Años bonif. tarjeta (0 = todo)", value=0, min_value=0, max_value=40, step=1, key="f_ab_tar")
 
-        submitted = st.form_submit_button("Guardar hipoteca")
+        submitted = st.form_submit_button("➕ Guardar como nueva hipoteca")
         if submitted and nombre_entidad and nombre_hipoteca:
             logo_path = None
             if dominio_logo:
@@ -1819,7 +1819,7 @@ def agenda_inmuebles(usuario_id: int):
             categoria = st.radio("Categoría", CATEGORIAS_INMUEBLE, horizontal=True, index=0)
             st.caption("Horas de luz anuales (opcional): pega aquí el contenido de annual-sunlight.json (la subida de archivo suele fallar en la nube).")
             sunlight_paste_alta = st.text_area("JSON horas de sol (pegar)", value="", height=100, key="alta_sunlight_paste", placeholder='{"minutesOfDirectSunPerDay": [...], ...}')
-            if st.form_submit_button("Dar de alta inmueble"):
+            if st.form_submit_button("➕ Guardar como nuevo inmueble"):
                 cert_consumo_alta = _letra_desde_consumo_kwh_m2(consumo_exacto_alta) if consumo_exacto_alta > 0 else (certificado_consumo if certificado_consumo != "—" else "")
                 cert_emisiones_alta = _letra_desde_emisiones_kg_m2(emisiones_exactas_alta) if emisiones_exactas_alta > 0 else (certificado_emisiones if certificado_emisiones != "—" else "")
                 inv = {
@@ -3220,8 +3220,8 @@ def _tab_entrada_gastos_financiacion(usuario_id: int):
     st.markdown("---")
     with st.expander("➕ Ofertas de compra y seguimiento", expanded=False):
         st.caption(
-            "Pon nombre y estado y pulsa **Guardar oferta**. **Contraoferta:** ajusta el precio en el formulario (debajo del resumen) y guarda de nuevo "
-            "o usa **Actualizar** si cargaste una oferta. Requiere `GITHUB_TOKEN` para persistir en el repo."
+            "Pon nombre y estado. **Guardar cambios** actualiza la oferta cargada o seleccionada; **Guardar como nuevo** crea otro registro en GitHub "
+            "(útil para contraofertas sin pisar la anterior). Requiere `GITHUB_TOKEN`."
         )
     
         nombre_of = st.text_input(
@@ -3283,28 +3283,32 @@ def _tab_entrada_gastos_financiacion(usuario_id: int):
                 "fecha_actualizado": now,
             }
     
-        st.markdown("**Guardar**")
+        st.markdown("**Guardar en GitHub**")
         gsave1, gsave2 = st.columns(2)
         with gsave1:
-            btn_guardar = st.button(
-                "💾 Guardar oferta",
-                key=f"entrada_guardar_nueva_{inv_id}",
-                help="Crea un nuevo registro en GitHub con la simulación actual (nombre y estado en este bloque).",
-            )
-        with gsave2:
             edit_id_btn = st.session_state.get(k_edit)
-            btn_actualizar = st.button(
-                "Actualizar oferta cargada",
+            btn_guardar_cambios = st.button(
+                "💾 Guardar cambios",
                 key=f"entrada_guardar_actualizar_{inv_id}",
                 disabled=not bool(edit_id_btn),
-                help="Sustituye la oferta que cargaste con «Cargar en la simulación».",
+                help="Sustituye en GitHub la oferta cargada o elegida en el desplegable (mismo id).",
+            )
+        with gsave2:
+            btn_guardar_nuevo = st.button(
+                "➕ Guardar como nuevo",
+                key=f"entrada_guardar_nueva_{inv_id}",
+                help="Crea un registro nuevo con la simulación actual; no modifica la oferta que tengas en edición.",
             )
         if st.session_state.get(k_edit):
-            st.caption(f"Editando oferta **#{st.session_state[k_edit]}** — puedes pulsar **Actualizar oferta cargada**.")
+            st.caption(
+                f"Oferta **#{st.session_state[k_edit]}** en edición: **Guardar cambios** la actualiza; **Guardar como nuevo** duplica el escenario con otro id."
+            )
         else:
-            st.caption("Para actualizar una existente, primero **Cargar** una oferta de la lista de abajo.")
+            st.caption(
+                "**Guardar como nuevo** crea una oferta. **Guardar cambios** se habilita al **cargar o seleccionar** una oferta en la lista de abajo."
+            )
     
-        if btn_guardar:
+        if btn_guardar_nuevo:
             pl = _payload_oferta()
             pl["fecha_creado"] = pl["fecha_actualizado"]
             r = ghd.añadir_oferta_compra(usuario_id, pl)
@@ -3315,10 +3319,10 @@ def _tab_entrada_gastos_financiacion(usuario_id: int):
             else:
                 st.error("No se pudo guardar (¿GITHUB_TOKEN configurado?).")
     
-        if btn_actualizar:
+        if btn_guardar_cambios:
             edit_id = st.session_state.get(k_edit)
             if not edit_id:
-                st.warning("Primero **Cargar** una oferta en la lista de abajo, o pulsa **Guardar oferta**.")
+                st.warning("Primero **carga o selecciona** una oferta en la lista de abajo, o pulsa **Guardar como nuevo**.")
             else:
                 pl = _payload_oferta()
                 pl["id"] = int(edit_id)
@@ -3362,13 +3366,13 @@ def _tab_entrada_gastos_financiacion(usuario_id: int):
                 )
             st.dataframe(pd.DataFrame(rows), hide_index=True, use_container_width=True)
             st.caption(
-                "**Total a aportar** es el **neto** guardado al pulsar «Guardar oferta» o «Actualizar»: "
+                "**Total a aportar** es el **neto** guardado al pulsar «Guardar como nuevo» o «Guardar cambios»: "
                 "entrada (precio − parte financiada) + **gastos de compra** (ITP, notaría, registro, gestoría, comisión y **efectivo para la compra**) "
                 "− **provisiones de fondos** (suma de los conceptos verdes marcados como incluir). "
                 "Ofertas antiguas sin `provisiones_total` usan la columna «Provisiones» a partir de `efectivo_adicional`."
             )
         else:
-            st.info("Aún no hay ofertas guardadas. Rellena nombre/estado y pulsa **Guardar oferta**.")
+            st.info("Aún no hay ofertas guardadas. Rellena nombre/estado y pulsa **Guardar como nuevo**.")
     
         # Selectbox por índice (entero estable). Con etiquetas largas como valor, un rerun que cambiaba
         # el texto invalidaba la selección y Streamlit volvía al placeholder → «Cargar» no encontraba oferta.
@@ -3445,13 +3449,13 @@ def _tab_entrada_gastos_financiacion(usuario_id: int):
             "—",
         )
         st.caption(
-            f"Combinación activa: **{nom_activa}** · {len(combo_list)} combinación(es). "
-            "En el **sidebar** eliges la combinación (la activa se escribe en GitHub al cambiar). "
-            "Aquí puedes **actualizar** la activa con los importes actuales, **crear** otra combinación o **eliminar** la activa."
+            f"Combinación activa: **{nom_activa}** · {len(combo_list)} perfil(es). "
+            "En el **sidebar** eliges el perfil (la activa se escribe en GitHub al cambiar). "
+            "Aquí **Guardar cambios** persiste el perfil activo y **Guardar como nuevo perfil** crea otro; también puedes **eliminar** el activo."
         )
         u1, u2 = st.columns(2)
         with u1:
-            if st.button("💾 Actualizar combinación activa en GitHub", key="aport_btn_update_github"):
+            if st.button("💾 Guardar cambios (perfil activo en GitHub)", key="aport_btn_update_github"):
                 _aport_actualizar_combo_activa_desde_session()
                 doc_u = _aport_doc_para_persist()
                 if ghd.guardar_aportacion_efectivo(usuario_id, doc_u):
@@ -3477,7 +3481,7 @@ def _tab_entrada_gastos_financiacion(usuario_id: int):
                     st.error("No se pudo guardar tras eliminar (¿GITHUB_TOKEN?).")
         with st.form("form_nueva_combo_aportacion"):
             nombre_nueva = st.text_input("Nombre para nueva combinación", placeholder="Ej. Escenario solo efectivo")
-            if st.form_submit_button("➕ Crear combinación con los valores actuales y guardar en GitHub"):
+            if st.form_submit_button("➕ Guardar como nuevo perfil y activarlo en GitHub"):
                 imp_n, inc_n = _aport_snapshot_session()
                 combos_prev = copy.deepcopy(st.session_state.get("_aport_combinaciones") or [])
                 new_id = _next_aport_combo_id(combos_prev)
@@ -4224,6 +4228,7 @@ def main():
         st.subheader("Changelog")
         st.markdown(f"**Versión actual: {VERSION_APP}**")
         st.markdown("""
+        - **1.20.5** — **Desplegables alta/edición:** textos unificados **Guardar cambios** vs **Guardar como nuevo** (ofertas de compra, perfiles de provisiones en GitHub, alta hipoteca/inmueble). En ofertas, **Guardar cambios** a la izquierda (solo con oferta cargada/seleccionada).
         - **1.20.4** — **Entrada y gastos:** parámetros (precio, gastos, gestoría) dentro del expander ➕✏️; gestoría a ancho completo con ayuda al **importe por defecto** (`GESTORIA_EUR`). **Ofertas:** al seleccionar en el desplegable se aplica la oferta y se refresca el resumen (igual que «Cargar»).
         - **1.20.3** — **Corrección Streamlit Cloud:** al cargar una oferta en «Entrada y gastos», los importes de provisiones se aplican en `main()` **antes** del sidebar (no en la pestaña), evitando `StreamlitAPIException` al asignar `aport_imp_*`/`aport_inc_*` cuando esos widgets ya existen.
         - **1.20.2** — **Entrada y gastos:** en el resumen, **indicadores visuales**: barras apiladas (financiación del precio; composición del bruto), **gráfico de barras** entrada vs gastos, barra **st.progress** de cobertura de provisiones frente al bruto, gráfica **tasación vs media del barrio** (o solo tasación si falta la media), bloque **Hipoteca y provisiones** con métricas.
