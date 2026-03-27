@@ -2779,7 +2779,7 @@ def _tab_entrada_gastos_financiacion(usuario_id: int):
         else:
             color_neto, texto_neto = "#64748b", "0 €"
         st.markdown(
-            f'<div><div style="font-size:0.875rem;color:rgba(49,51,63,0.6);margin-bottom:0.25rem;">'
+            f'<div><div style="font-size:0.875rem;color:rgba(93,158,134,0.6);margin-bottom:0.25rem;">'
             f"Neto a aportar (tras provisiones)</div>"
             f'<div style="font-size:1.5rem;font-weight:600;color:{color_neto};">{html.escape(texto_neto)}</div></div>',
             unsafe_allow_html=True,
@@ -2792,7 +2792,7 @@ def _tab_entrada_gastos_financiacion(usuario_id: int):
     col_tas_l, col_tas_r = st.columns(2)
     with col_tas_l:
         st.markdown(
-            '<div style="font-size:0.875rem;color:rgba(49,51,63,0.6);margin-bottom:0.25rem;">'
+            '<div style="font-size:0.875rem;color:rgba(93,158,134,0.6);margin-bottom:0.25rem;">'
             "Tasación objetivo (si el banco exige que el precio sea el <strong>80%</strong> de la tasación)</div>",
             unsafe_allow_html=True,
         )
