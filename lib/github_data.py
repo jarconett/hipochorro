@@ -39,6 +39,8 @@ INMUEBLES_FOTOS_DIR = f"{DATA_DIR}/inmuebles_fotos"
 INMUEBLES_SUNLIGHT_DIR = f"{DATA_DIR}/inmuebles_sunlight"
 OFERTAS_COMPRA_DIR = f"{DATA_DIR}/ofertas_compra"
 APORTACION_EFECTIVO_DIR = f"{DATA_DIR}/aportacion_efectivo"
+UI_STATE_DIR = f"{DATA_DIR}/ui_state"
+SIMULACIONES_ENTRADA_DIR = f"{DATA_DIR}/simulaciones_entrada"
 LOGOS_DIR = f"{DATA_DIR}/logos"
 
 def _slug(texto: str) -> str:
@@ -480,3 +482,95 @@ def guardar_aportacion_efectivo(usuario_id: int, data: dict) -> bool:
         except Exception:
             return False
     return True
+
+
+# --- Estado UI (sidebar / simulación entrada): restaurar al iniciar sesión ---
+
+def _path_ui_state(usuario_id: int) -> str:
+    return f"{UI_STATE_DIR}/usuario_{usuario_id}.json"
+
+
+def get_ui_state(usuario_id: int) -> dict:
+    """Lee estado de UI guardado para el usuario (GPS, selectores sidebar, etc.)."""
+    repo = _repo()
+    if not repo:
+        return {}
+    path = _path_ui_state(usuario_id)
+    try:
+        c = repo.get_contents(path)
+        data = json.loads(base64.b64decode(c.content).decode())
+        return data if isinstance(data, dict) else {}
+    except Exception:
+        return {}
+
+
+def guardar_ui_state(usuario_id: int, estado: dict) -> bool:
+    """Persiste estado de UI (dict JSON-serializable)."""
+    repo = _repo()
+    if not repo:
+        return False
+    path = _path_ui_state(usuario_id)
+    contenido = json.dumps(estado, indent=2, ensure_ascii=False)
+    try:
+        c = repo.get_contents(path)
+        repo.update_file(path, "Actualizar estado UI usuario", contenido, c.sha)
+    except Exception:
+        try:
+            repo.create_file(path, "Crear estado UI usuario", contenido)
+        except Exception:
+            return False
+    return True
+
+
+# --- Simulaciones Entrada y gastos + cuadro amortización (snapshots) ---
+
+def _path_simulaciones_entrada(usuario_id: int) -> str:
+    return f"{SIMULACIONES_ENTRADA_DIR}/usuario_{usuario_id}.json"
+
+
+def get_simulaciones_entrada(usuario_id: int) -> list:
+    """Lista de snapshots guardados (parámetros + filas amortización opcionales)."""
+    repo = _repo()
+    if not repo:
+        return []
+    path = _path_simulaciones_entrada(usuario_id)
+    try:
+        c = repo.get_contents(path)
+        data = json.loads(base64.b64decode(c.content).decode())
+        sims = data.get("simulaciones", [])
+        return sims if isinstance(sims, list) else []
+    except Exception:
+        return []
+
+
+def guardar_simulaciones_entrada(usuario_id: int, simulaciones: list) -> bool:
+    repo = _repo()
+    if not repo:
+        return False
+    path = _path_simulaciones_entrada(usuario_id)
+    contenido = json.dumps({"simulaciones": simulaciones}, indent=2, ensure_ascii=False)
+    try:
+        c = repo.get_contents(path)
+        repo.update_file(path, "Actualizar simulaciones entrada", contenido, c.sha)
+    except Exception:
+        try:
+            repo.create_file(path, "Crear simulaciones entrada usuario", contenido)
+        except Exception:
+            return False
+    return True
+
+
+def añadir_simulacion_entrada(usuario_id: int, sim: dict) -> Optional[dict]:
+    sims = get_simulaciones_entrada(usuario_id)
+    sid = max([int(s.get("id", 0) or 0) for s in sims], default=0) + 1
+    sim = dict(sim)
+    sim["id"] = sid
+    sims.append(sim)
+    if guardar_simulaciones_entrada(usuario_id, sims):
+        return sim
+    return None
+
+
+def eliminar_simulacion_entrada(usuario_id: int, sim_id: int) -> bool:
+    sims = [s for s in get_simulaciones_entrada(usuario_id) if int(s.get("id", 0) or 0) != int(sim_id)]
+    return guardar_simulaciones_entrada(usuario_id, sims)

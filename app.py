@@ -15,7 +15,7 @@ import html
 import json
 import math
 import re
-from datetime import datetime
+from datetime import datetime, timezone
 import streamlit as st
 import streamlit.components.v1 as components
 import pandas as pd
@@ -70,7 +70,7 @@ HELP_TAE = (
 APIFY_TOKEN_SECRET = "APIFY_TOKEN_SECRET"
 
 # Versión de la aplicación (visible bajo el título y en la pestaña Info; no en el pie del sidebar para no duplicar el branding de Streamlit Cloud)
-VERSION_APP = "1.21.0"
+VERSION_APP = "1.22.0"
 
 # Gastos de compra (sobre precio de la vivienda / ITP)
 ITP_PCT = 7.0           # Impuesto de Transmisiones Patrimoniales: % sobre precio vivienda
@@ -2590,8 +2590,39 @@ HELP_ENTRADA_FINANCIACION = (
     "Sobre el **precio de compra** simulado:\n\n"
     "• **Con %** (ej. `90` o `90 %`): porcentaje que financia el banco.\n"
     "• **Número negativo** (ej. `-261000`): capital **prestado** en euros (el − indica préstamo, no resta aritmética).\n"
-    "• **Número positivo** (ej. `29000`): **entrada** que aportas tú; lo financiado = precio − entrada."
+    "• **Número positivo** (ej. `29000` o `29.000`): **entrada** que aportas tú; lo financiado = precio − entrada."
 )
+
+
+def _normalizar_numero_euros_texto(s: str) -> str:
+    """
+    Convierte texto numérico a forma parseable por float.
+    - Miles españoles: 44.300 o 270.000 → 44300 / 270000
+    - Decimal con coma: 90,5 → 90.5
+    """
+    t = (s or "").strip().replace(" ", "")
+    if not t:
+        return t
+    neg = t.startswith("-")
+    if neg:
+        t = t[1:]
+
+    if re.fullmatch(r"\d{1,3}([.,]\d{3})+", t):
+        t = t.replace(".", "").replace(",", "")
+    elif "," in t and "." in t:
+        if t.rfind(",") > t.rfind("."):
+            t = t.replace(".", "").replace(",", ".")
+        else:
+            t = t.replace(",", "")
+    elif t.count(",") == 1 and t.count(".") == 0:
+        parts = t.split(",")
+        if len(parts[1]) <= 2:
+            t = parts[0] + "." + parts[1]
+        else:
+            t = t.replace(",", "")
+    else:
+        t = t.replace(",", ".")
+    return ("-" if neg else "") + t
 
 
 def _parse_financiacion_entrada(raw: str, precio_compra: float) -> tuple[float, float, str]:
@@ -2602,10 +2633,10 @@ def _parse_financiacion_entrada(raw: str, precio_compra: float) -> tuple[float, 
     s0 = (raw or "").strip()
     if not s0:
         return 0.0, 0.0, "vacio"
-    s = s0.replace(",", ".").replace(" ", "")
     precio = max(0.0, float(precio_compra or 0))
-    if "%" in s0 or s.endswith("%"):
-        num_part = s.replace("%", "").strip()
+    if "%" in s0:
+        num_part = s0.split("%", 1)[0].strip()
+        num_part = _normalizar_numero_euros_texto(num_part)
         try:
             pct = float(num_part)
         except (TypeError, ValueError):
@@ -2613,6 +2644,7 @@ def _parse_financiacion_entrada(raw: str, precio_compra: float) -> tuple[float, 
         pct = max(0.0, min(100.0, pct))
         fin = precio * pct / 100.0
         return fin, pct, "pct"
+    s = _normalizar_numero_euros_texto(s0)
     try:
         v = float(s)
     except (TypeError, ValueError):
@@ -2851,6 +2883,262 @@ def _aplicar_oferta_entrada_gastos_a_session(oferta: dict, inmuebles: list, hipo
     return True
 
 
+def _entrada_hipoteca_inmueble_ids_desde_session(hipotecas: list, inmuebles: list) -> tuple[int, int]:
+    opts_hipo = _opts_hipo_entrada_labels(hipotecas)
+    opts_inv = [f"{_titulo_inmueble(inv)} (ID {inv.get('id')})" for inv in inmuebles]
+    sel_h = st.session_state.get("entrada_sel_hipo")
+    sel_i = st.session_state.get("entrada_sel_inv")
+    if not hipotecas or not inmuebles:
+        return 0, 0
+    if sel_h not in opts_hipo:
+        sel_h = opts_hipo[0]
+    if sel_i not in opts_inv:
+        sel_i = opts_inv[0]
+    h = hipotecas[opts_hipo.index(sel_h)]
+    inv = inmuebles[opts_inv.index(sel_i)]
+    return int(h.get("id") or 0), int(inv.get("id") or 0)
+
+
+def _doc_sim_entrada_desde_session_actual(usuario_id: int) -> dict | None:
+    """Snapshot JSON para GitHub: parámetros actuales de Entrada y cuadro amortización 30 años."""
+    hipotecas = ghd.get_hipotecas(usuario_id)
+    inmuebles = ghd.get_inmuebles(usuario_id)
+    if not hipotecas or not inmuebles:
+        return None
+    hid, iid = _entrada_hipoteca_inmueble_ids_desde_session(hipotecas, inmuebles)
+    h = next((x for x in hipotecas if int(x.get("id") or 0) == hid), hipotecas[0])
+    inv = next((x for x in inmuebles if int(x.get("id") or 0) == iid), inmuebles[0])
+    inv_id = int(inv.get("id") or 0)
+    k_precio = f"entrada_precio_{inv_id}"
+    k_not = f"entrada_notaria_{inv_id}"
+    k_reg = f"entrada_registro_{inv_id}"
+    k_ges = f"entrada_gestoria_{inv_id}"
+    k_ef = f"entrada_efectivo_compra_{inv_id}"
+    k_fin = f"entrada_fin_espec_{inv_id}"
+    k_cpct = f"entrada_comision_pct_{inv_id}"
+    k_cchk = f"entrada_comision_chk_precio_ef_{inv_id}"
+    pf = max(float(inv.get("importe") or 0), 0.0)
+    precio = float(st.session_state.get(k_precio, pf) or 0)
+    notaria = float(st.session_state.get(k_not, 1000.0) or 1000.0)
+    registro = float(st.session_state.get(k_reg, 600.0) or 600.0)
+    gestoria = float(st.session_state.get(k_ges, GESTORIA_EUR) or GESTORIA_EUR)
+    ef_compra = float(st.session_state.get(k_ef, 0.0) or 0.0)
+    _raw_fin = str(st.session_state.get(k_fin, "") or "").strip()
+    pct_com = float(
+        st.session_state.get(k_cpct, float(inv.get("comision_venta_pct") or 0) if inv.get("inmobiliaria") else 0.0)
+        or 0.0
+    )
+    com_chk = bool(st.session_state.get(k_cchk, False))
+    _, pct_fin, _mod = _parse_financiacion_entrada(_raw_fin, precio)
+    if _mod in ("error", "vacio"):
+        pct_fin = 90.0 if precio > 0 else 0.0
+    elif _mod == "cero":
+        pct_fin = 0.0
+    provisiones_total, _ = _sum_efectivo_aportacion()
+    tot = _totales_entrada_gastos(
+        precio,
+        inv,
+        notaria,
+        registro,
+        gestoria,
+        ef_compra,
+        provisiones_total,
+        pct_fin,
+        pct_comision_inmobiliaria=pct_com,
+        comision_sobre_precio_mas_efectivo_compra=com_chk,
+    )
+    financiado = float(tot.get("financiado") or 0)
+    tin = float(h.get("tin") or 0)
+    meses_am = 360
+    filas = am.cuadro_mensual_frances(financiado, tin, meses_am) if financiado > 0 else []
+    imp = {k: float(st.session_state.get(f"aport_imp_{k}", 0) or 0) for k, _ in CONCEPTOS_EFECTIVO_APORTACION}
+    inc = {k: bool(st.session_state.get(f"aport_inc_{k}", True)) for k, _ in CONCEPTOS_EFECTIVO_APORTACION}
+    return {
+        "hipoteca_id": hid,
+        "inmueble_id": iid,
+        "precio_compra": precio,
+        "financiacion_txt": _raw_fin if _raw_fin else "90%",
+        "notaria": notaria,
+        "registro": registro,
+        "gestoria": gestoria,
+        "efectivo_para_compra": ef_compra,
+        "comision_inmobiliaria_pct": pct_com,
+        "comision_base_incluye_efectivo": com_chk,
+        "efectivo_por_concepto": imp,
+        "efectivo_incluir_conceptos": inc,
+        "amort_capital_financiado": financiado,
+        "amort_tin": tin,
+        "amort_meses": meses_am,
+        "amort_filas": filas,
+    }
+
+
+def _aplicar_sim_entrada_guardada_a_session(doc: dict, inv_id: int, inv: dict) -> None:
+    """Aplica snapshot guardado (sin campos de oferta de compra)."""
+    k_precio = f"entrada_precio_{inv_id}"
+    k_not = f"entrada_notaria_{inv_id}"
+    k_reg = f"entrada_registro_{inv_id}"
+    k_ges = f"entrada_gestoria_{inv_id}"
+    k_ef_compra = f"entrada_efectivo_compra_{inv_id}"
+    k_fin_txt = f"entrada_fin_espec_{inv_id}"
+    k_com_pct = f"entrada_comision_pct_{inv_id}"
+    k_com_chk = f"entrada_comision_chk_precio_ef_{inv_id}"
+    _k_com_chk_ant = f"entrada_comision_base_ef_{inv_id}"
+    k_edit = f"entrada_oferta_edit_id_{inv_id}"
+    k_nombre = f"entrada_nombre_oferta_{inv_id}"
+    k_notas = f"entrada_notas_oferta_{inv_id}"
+    k_estado = f"entrada_estado_oferta_{inv_id}"
+    for _wk in (
+        k_precio,
+        k_not,
+        k_reg,
+        k_ges,
+        k_ef_compra,
+        k_fin_txt,
+        k_com_pct,
+        k_com_chk,
+        _k_com_chk_ant,
+        k_nombre,
+        k_notas,
+        k_estado,
+        k_edit,
+    ):
+        st.session_state.pop(_wk, None)
+    st.session_state[k_precio] = float(doc.get("precio_compra") or 0)
+    st.session_state[k_not] = float(doc.get("notaria", 1000) or 1000)
+    st.session_state[k_reg] = float(doc.get("registro", 600) or 600)
+    st.session_state[k_ges] = float(doc.get("gestoria", GESTORIA_EUR) or GESTORIA_EUR)
+    st.session_state[k_ef_compra] = float(doc.get("efectivo_para_compra", 0) or 0)
+    st.session_state[k_fin_txt] = str(doc.get("financiacion_txt") or "90%").strip() or "90%"
+    st.session_state[k_com_pct] = float(
+        doc.get("comision_inmobiliaria_pct")
+        if doc.get("comision_inmobiliaria_pct") is not None
+        else (float(inv.get("comision_venta_pct", 0) or 0) if inv.get("inmobiliaria") else 0.0)
+    )
+    st.session_state[k_com_chk] = bool(doc.get("comision_base_incluye_efectivo", False))
+    ed = doc.get("efectivo_por_concepto")
+    ei = doc.get("efectivo_incluir_conceptos")
+    if ed and isinstance(ed, dict):
+        for k, _ in CONCEPTOS_EFECTIVO_APORTACION:
+            st.session_state[f"aport_imp_{k}"] = float(ed.get(k, 0) or 0)
+        leg_ed = float(ed.get("efectivo", 0) or 0)
+        if leg_ed:
+            st.session_state["aport_imp_efectivo_marta"] = float(
+                st.session_state.get("aport_imp_efectivo_marta", 0) or 0
+            ) + leg_ed
+    else:
+        for k, _ in CONCEPTOS_EFECTIVO_APORTACION:
+            st.session_state[f"aport_imp_{k}"] = 0.0
+    if ei and isinstance(ei, dict):
+        for k, _ in CONCEPTOS_EFECTIVO_APORTACION:
+            st.session_state[f"aport_inc_{k}"] = bool(ei.get(k, True))
+        if "efectivo" in ei and "efectivo_marta" not in ei and "efectivo_irene" not in ei:
+            ev = bool(ei["efectivo"])
+            st.session_state["aport_inc_efectivo_marta"] = ev
+            st.session_state["aport_inc_efectivo_irene"] = ev
+    else:
+        for k, _ in CONCEPTOS_EFECTIVO_APORTACION:
+            st.session_state[f"aport_inc_{k}"] = True
+    st.session_state[k_edit] = 0
+    st.session_state[k_nombre] = ""
+    st.session_state[k_notas] = ""
+    st.session_state[k_estado] = 0
+    filas = doc.get("amort_filas")
+    if isinstance(filas, list) and len(filas) > 0:
+        st.session_state[f"entrada_amort_snapshot_{inv_id}"] = {
+            "filas": filas,
+            "meta": {
+                "capital": float(doc.get("amort_capital_financiado") or 0),
+                "tin": float(doc.get("amort_tin") or 0),
+                "meses": int(doc.get("amort_meses") or 360),
+            },
+        }
+    else:
+        st.session_state.pop(f"entrada_amort_snapshot_{inv_id}", None)
+
+
+def _flush_pending_sim_entrada_antes_sidebar(usuario_id: int) -> None:
+    doc = st.session_state.pop("_entrada_aplicar_sim_entrada", None)
+    if not doc or not isinstance(doc, dict):
+        return
+    hipotecas = ghd.get_hipotecas(usuario_id)
+    if not hipotecas:
+        return
+    inmuebles = ghd.get_inmuebles(usuario_id)
+    if not inmuebles:
+        return
+    inv_id_o = int(doc.get("inmueble_id") or 0)
+    inv_o = next((i for i in inmuebles if int(i.get("id") or 0) == inv_id_o), None)
+    if not inv_o:
+        return
+    opts_hipo = _opts_hipo_entrada_labels(hipotecas)
+    hid = int(doc.get("hipoteca_id") or 0)
+    h_o = next((h for h in hipotecas if int(h.get("id") or 0) == hid), None)
+    if h_o:
+        sel_h = f"{h_o.get('nombre_entidad','')} — {h_o.get('nombre_hipoteca','')} (TIN {h_o.get('tin')}%)"
+        st.session_state["entrada_sel_hipo"] = sel_h if sel_h in opts_hipo else opts_hipo[0]
+    else:
+        st.session_state["entrada_sel_hipo"] = opts_hipo[0]
+    st.session_state["entrada_sel_inv"] = f"{_titulo_inmueble(inv_o)} (ID {inv_o.get('id')})"
+    _aplicar_sim_entrada_guardada_a_session(doc, inv_id_o, inv_o)
+
+
+def _payload_ui_state_para_github(hipotecas: list, inmuebles: list) -> dict:
+    inv_sb = st.session_state.get("inmueble_seleccionado")
+    eh, ei = _entrada_hipoteca_inmueble_ids_desde_session(hipotecas, inmuebles)
+    return {
+        "version": 1,
+        "guardado_en": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "gps_destino": str(st.session_state.get("gps_destino") or "").strip()[:500],
+        "sidebar_inmueble_id": int(inv_sb.get("id") or 0) if inv_sb else 0,
+        "entrada_hipoteca_id": eh,
+        "entrada_inmueble_id": ei,
+        "sidebar_entrada_oferta_id": int(st.session_state.get("sidebar_entrada_oferta_id") or -1),
+    }
+
+
+def _aplicar_ui_state_gps_y_entrada(p: dict, hipotecas: list, inmuebles: list) -> None:
+    """Antes del widget GPS: ciudad destino y selectores de la pestaña Entrada."""
+    if not p or not isinstance(p, dict):
+        return
+    if p.get("gps_destino"):
+        st.session_state["gps_destino"] = str(p["gps_destino"])[:500]
+    if hipotecas:
+        opts_hipo = _opts_hipo_entrada_labels(hipotecas)
+        hid = int(p.get("entrada_hipoteca_id") or 0)
+        h_o = next((h for h in hipotecas if int(h.get("id") or 0) == hid), None)
+        if h_o:
+            sel_h = f"{h_o.get('nombre_entidad','')} — {h_o.get('nombre_hipoteca','')} (TIN {h_o.get('tin')}%)"
+            if sel_h in opts_hipo:
+                st.session_state["entrada_sel_hipo"] = sel_h
+    if inmuebles:
+        opts_inv_u = [f"{_titulo_inmueble(inv)} (ID {inv.get('id')})" for inv in inmuebles]
+        iid = int(p.get("entrada_inmueble_id") or 0)
+        inv_o = next((i for i in inmuebles if int(i.get("id") or 0) == iid), None)
+        if inv_o:
+            lbl = f"{_titulo_inmueble(inv_o)} (ID {inv_o.get('id')})"
+            if lbl in opts_inv_u:
+                st.session_state["entrada_sel_inv"] = lbl
+
+
+def _aplicar_ui_state_sel_inmueble_y_oferta(p: dict, opts_inv: list, lista_inv_ordenada: list) -> None:
+    """Tras construir la lista del selectbox del sidebar: inmueble simulado y oferta guardada."""
+    if not p or not isinstance(p, dict):
+        return
+    sid = int(p.get("sidebar_inmueble_id") or 0)
+    if sid > 0 and opts_inv:
+        for ix, inv in enumerate(lista_inv_ordenada):
+            if inv is not None and int(inv.get("id") or 0) == sid and ix < len(opts_inv):
+                st.session_state["sel_inmueble"] = opts_inv[ix]
+                break
+    if p.get("sidebar_entrada_oferta_id") is not None:
+        try:
+            st.session_state["sidebar_entrada_oferta_id"] = int(p["sidebar_entrada_oferta_id"])
+            st.session_state["_sidebar_entrada_oferta_aplicada_id"] = None
+        except (TypeError, ValueError):
+            pass
+
+
 def _tab_entrada_gastos_financiacion(usuario_id: int):
     """
     Pestaña: calcula la entrada necesaria para un % de financiación (por defecto 90%),
@@ -2968,19 +3256,20 @@ def _tab_entrada_gastos_financiacion(usuario_id: int):
             help=HELP_ENTRADA_FINANCIACION,
             placeholder="Ej: 90 %, -261000 o 29000",
         )
-        _pc_hint = float(st.session_state.get(k_precio, 0) or 0)
+        # Usar el valor devuelto por number_input (precio de este rerun), no solo session_state:
+        # si se lee k_precio antes de que el widget sincronice, precio=0 y (+entrada) daba 0 € financiados.
         _raw_hint = str(st.session_state.get(k_fin_txt, "") or "").strip()
-        _fin_h, _pct_h, _mod_h = _parse_financiacion_entrada(_raw_hint, _pc_hint)
+        _fin_h, _pct_h, _mod_h = _parse_financiacion_entrada(_raw_hint, precio_compra)
         if _mod_h == "error":
             st.caption("⚠ No se entiende el valor; usa **%**, un **negativo** (préstamo en €) o un **positivo** (entrada en €).")
         elif _mod_h == "vacio":
             st.caption("Sin valor: se usará **90 %** del precio al calcular.")
-        elif _pc_hint <= 0:
+        elif precio_compra <= 0:
             st.caption("Indica primero un **precio de compra** mayor que 0.")
         else:
             st.caption(
                 f"→ **{_fin_h:,.0f} €** financiados sobre precio (**{_pct_h:.2f} %**) · "
-                f"entrada sobre precio **{_pc_hint - _fin_h:,.0f} €**"
+                f"entrada sobre precio **{precio_compra - _fin_h:,.0f} €**"
             )
 
         st.markdown(
@@ -3059,7 +3348,7 @@ def _tab_entrada_gastos_financiacion(usuario_id: int):
 
     _ui_aportacion_fondos_entrada_tab(usuario_id)
 
-    precio_compra = float(st.session_state[k_precio])
+    # precio_compra ya viene del number_input del expander (mismo rerun que la leyenda de financiación).
     _raw_fin = str(st.session_state.get(k_fin_txt, "") or "").strip()
     _, pct_financiacion, _mod_fin = _parse_financiacion_entrada(_raw_fin, precio_compra)
     if _mod_fin in ("error", "vacio"):
@@ -3270,18 +3559,31 @@ def _tab_entrada_gastos_financiacion(usuario_id: int):
         st.warning("Indica un **precio de compra** mayor que 0 para que los totales tengan sentido.")
 
     MESES_AMORT_ENTRADA = 360
+    snap_key_am = f"entrada_amort_snapshot_{inv_id}"
+    snap_am = st.session_state.get(snap_key_am)
     with st.expander("Cuadro de amortización francesa (30 años / 360 cuotas)", expanded=False):
         tin_am = float(h.get("tin", 0) or 0)
         plazo_ficha = int(h.get("duracion_anos", 0) or 0)
         if financiado <= 0:
             st.caption("No hay **capital financiado**; ajusta precio y el campo de financiación/entrada.")
         else:
-            st.caption(
-                f"Simulación con capital **{financiado:,.0f} €**, **TIN {tin_am:g} %** nominal anual, "
-                f"**{MESES_AMORT_ENTRADA}** mensualidades (cuota casi constante). "
-                f"Plazo del producto en la ficha de la hipoteca: **{plazo_ficha}** años (referencia contractual)."
-            )
-            filas_am = am.cuadro_mensual_frances(financiado, tin_am, MESES_AMORT_ENTRADA)
+            usar_snap_am = isinstance(snap_am, dict) and snap_am.get("filas")
+            if usar_snap_am:
+                meta_sn = snap_am.get("meta") or {}
+                st.caption(
+                    f"**Cuadro guardado** (snapshot al guardar la simulación desde el sidebar): capital "
+                    f"**{float(meta_sn.get('capital') or 0):,.0f} €**, **TIN {float(meta_sn.get('tin') or 0):g} %**, "
+                    f"**{int(meta_sn.get('meses') or MESES_AMORT_ENTRADA)}** meses. "
+                    f"La simulación actual tiene **{financiado:,.0f} €** financiados y TIN **{tin_am:g} %** — pulsa **Recalcular** para alinear el cuadro."
+                )
+                filas_am = snap_am["filas"]
+            else:
+                st.caption(
+                    f"Simulación con capital **{financiado:,.0f} €**, **TIN {tin_am:g} %** nominal anual, "
+                    f"**{MESES_AMORT_ENTRADA}** mensualidades (cuota casi constante). "
+                    f"Plazo del producto en la ficha de la hipoteca: **{plazo_ficha}** años (referencia contractual)."
+                )
+                filas_am = am.cuadro_mensual_frances(financiado, tin_am, MESES_AMORT_ENTRADA)
             df_am = pd.DataFrame(filas_am)
             st.dataframe(df_am, width="stretch", height=420)
             st.download_button(
@@ -3291,6 +3593,10 @@ def _tab_entrada_gastos_financiacion(usuario_id: int):
                 mime="text/csv",
                 key=f"dl_amort_entrada_{inv_id}",
             )
+            if usar_snap_am:
+                if st.button("Recalcular cuadro (descartar snapshot guardado)", key=f"btn_drop_amort_snap_{inv_id}"):
+                    st.session_state.pop(snap_key_am, None)
+                    st.rerun()
 
     st.markdown("---")
     st.markdown(
@@ -4156,15 +4462,25 @@ def main():
         st.session_state.inmueble_seleccionado = None
         st.session_state.pop("sidebar_entrada_oferta_id", None)
         st.session_state.pop("_sidebar_entrada_oferta_aplicada_id", None)
+        st.session_state.pop("_hipochorro_uid_login", None)
+        st.session_state.pop("_ui_state_payload_pending", None)
         st.rerun()
+
+    if st.session_state.get("_hipochorro_uid_login") != u["id"]:
+        st.session_state["_hipochorro_uid_login"] = u["id"]
+        st.session_state["_ui_state_payload_pending"] = ghd.get_ui_state(u["id"]) or {}
 
     _sync_aportacion_usuario(u["id"])
     _init_aportacion_widgets_from_github(u["id"])
     _aport_flush_pending_combo_ix()
     _flush_pending_entrada_oferta_antes_sidebar(u["id"])
+    _flush_pending_sim_entrada_antes_sidebar(u["id"])
 
     if "gps_destino" not in st.session_state:
         st.session_state.gps_destino = "Motril, Granada"
+    _pend_ui = st.session_state.get("_ui_state_payload_pending")
+    if _pend_ui:
+        _aplicar_ui_state_gps_y_entrada(_pend_ui, ghd.get_hipotecas(u["id"]), ghd.get_inmuebles(u["id"]))
     st.sidebar.markdown("**GPS**")
     gps_destino = st.sidebar.text_input(
         "Ciudad de destino (ruta por carretera)",
@@ -4207,6 +4523,9 @@ def main():
         d_min = _duracion_minutos_a_destino(inv, gps_destino)
         opts_inv.append("🔵 " + _titulo_inmueble(inv, d_min))
         lista_inv_ordenada.append(inv)
+    _pend_ui2 = st.session_state.pop("_ui_state_payload_pending", None)
+    if _pend_ui2:
+        _aplicar_ui_state_sel_inmueble_y_oferta(_pend_ui2, opts_inv, lista_inv_ordenada)
     sel_inv = st.sidebar.selectbox(
         "Inmueble para simular hipoteca",
         opts_inv,
@@ -4286,6 +4605,87 @@ def main():
             elif sel_o == -1 and last_o is not None:
                 st.session_state["_sidebar_entrada_oferta_aplicada_id"] = None
 
+    with st.sidebar.expander("📂 Simulación Entrada + amortización", expanded=False):
+        st.caption(
+            "Guarda en GitHub los **parámetros** de *Entrada y gastos* (precio, financiación, gastos, comisión, provisiones) "
+            "y el **cuadro de amortización** francés a 30 años. Carga una simulación para restaurar todo en la pestaña."
+        )
+        if not hipotecas_sb or not inmuebles:
+            st.caption("Necesitas hipotecas e inmuebles en la agenda.")
+        else:
+            st.text_input("Nombre al guardar", key="sidebar_sim_entrada_nombre", placeholder="Ej. Escenario marzo")
+            if st.button("💾 Guardar simulación + cuadro (GitHub)", key="btn_guardar_sim_entrada"):
+                doc = _doc_sim_entrada_desde_session_actual(u["id"])
+                if doc:
+                    nom = (st.session_state.get("sidebar_sim_entrada_nombre") or "").strip() or "Sin nombre"
+                    doc["nombre"] = nom
+                    doc["fecha_creado"] = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+                    if ghd.añadir_simulacion_entrada(u["id"], doc):
+                        st.sidebar.success(f"Guardado: «{nom}»")
+                        st.rerun()
+                    else:
+                        st.sidebar.error("No se pudo guardar (¿GITHUB_TOKEN?).")
+                else:
+                    st.sidebar.warning("No hay datos suficientes para guardar.")
+
+            _sims_sb = ghd.get_simulaciones_entrada(u["id"])
+            _sim_id_opts = [-1] + [int(s.get("id") or 0) for s in _sims_sb if int(s.get("id") or 0) > 0]
+
+            def _fmt_sidebar_sim(sid: int) -> str:
+                if sid == -1:
+                    return "— Ninguna (no cargar) —"
+                sm = next((z for z in _sims_sb if int(z.get("id") or 0) == sid), None)
+                if not sm:
+                    return f"#{sid}"
+                iid = int(sm.get("inmueble_id") or 0)
+                inv_m = next((i for i in inmuebles if int(i.get("id") or 0) == iid), None)
+                loc = (_titulo_inmueble(inv_m, None) if inv_m else f"ID {iid}")[:32]
+                nom_s = (sm.get("nombre") or "Sin nombre")[:22]
+                fc = (sm.get("fecha_creado") or "")[:10]
+                cap = float(sm.get("amort_capital_financiado") or 0)
+                return f"#{sid} · {nom_s} · {cap:,.0f} € · {loc} · {fc}"
+
+            st.selectbox(
+                "Cargar simulación guardada",
+                _sim_id_opts,
+                format_func=_fmt_sidebar_sim,
+                key="sidebar_sim_entrada_id",
+                help="Aplica hipoteca, inmueble, importes y el cuadro de amortización guardado al guardar.",
+            )
+            sel_sim = int(st.session_state.get("sidebar_sim_entrada_id") or -1)
+            last_sim = st.session_state.get("_sidebar_sim_entrada_aplicada_id")
+            if sel_sim != -1 and sel_sim != last_sim:
+                sm_pick = next((z for z in _sims_sb if int(z.get("id") or 0) == sel_sim), None)
+                if sm_pick:
+                    st.session_state["_entrada_aplicar_sim_entrada"] = dict(sm_pick)
+                    st.session_state["_sidebar_sim_entrada_aplicada_id"] = sel_sim
+                    st.rerun()
+            elif sel_sim == -1 and last_sim is not None:
+                st.session_state["_sidebar_sim_entrada_aplicada_id"] = None
+
+            if _sims_sb and sel_sim > 0:
+                if st.button("🗑️ Eliminar simulación seleccionada", key="btn_del_sim_entrada"):
+                    if ghd.eliminar_simulacion_entrada(u["id"], sel_sim):
+                        st.session_state["sidebar_sim_entrada_id"] = -1
+                        st.session_state["_sidebar_sim_entrada_aplicada_id"] = None
+                        st.session_state.pop("_entrada_aplicar_sim_entrada", None)
+                        st.sidebar.success("Simulación eliminada.")
+                        st.rerun()
+                    else:
+                        st.sidebar.error("No se pudo eliminar.")
+
+    st.sidebar.markdown("---")
+    st.sidebar.caption(
+        "**Estado del sidebar** (ciudad GPS, inmueble para hipoteca, hipoteca/inmueble en Entrada, oferta del desplegable) "
+        "se puede guardar para restaurarlo al **iniciar sesión**."
+    )
+    if st.sidebar.button("💾 Guardar estado del sidebar (GitHub)", key="btn_guardar_estado_ui"):
+        pl = _payload_ui_state_para_github(hipotecas_sb, inmuebles)
+        if ghd.guardar_ui_state(u["id"], pl):
+            st.sidebar.success("Estado guardado; la próxima vez que entres se aplicará solo.")
+        else:
+            st.sidebar.error("No se pudo guardar (¿GITHUB_TOKEN?).")
+
     tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs([
         "📝 Alta de hipotecas",
         "📊 Comparador",
@@ -4340,6 +4740,7 @@ def main():
         st.subheader("Changelog")
         st.markdown(f"**Versión actual: {VERSION_APP}**")
         st.markdown("""
+        - **1.22.0** — **Sidebar:** guardar y cargar **simulaciones de Entrada y gastos** + **cuadro de amortización** (30 años) en GitHub (`data/simulaciones_entrada/`). **Estado del sidebar** (GPS, inmueble simulado, hipoteca/inmueble en Entrada, oferta del desplegable) persistido en `data/ui_state/` y **restaurado al iniciar sesión** si pulsas *Guardar estado del sidebar*. Botón **Recalcular** en el cuadro de amortización para descartar un snapshot cargado.
         - **1.21.0** — **Entrada y gastos:** campo **Financiación / entrada** como texto: `%` = % sobre precio; **negativo** = capital prestado (€); **positivo** = entrada (€); tooltip y leyenda. **Cuadro amortización francesa** 360 cuotas (30 años) con TIN de la hipoteca y capital financiado + CSV. **Sidebar:** selector de **perfil de provisiones** en expander (carga simulación en GitHub).
         - **1.20.7** — **Sidebar:** eliminado el pie «Hipochorro v…» que se **duplicaba** con el encabezado de la app en Streamlit Cloud. La **versión** queda bajo el título principal y en **Info**.
         - **1.20.6** — **Entrada y gastos:** un solo desplegable **➕ ✏️ Provisiones de fondos** (selector de perfil, importes, Incluir, **Guardar cambios**, **Guardar como nuevo perfil**, eliminar). Eliminada la duplicación con el sidebar (ahí solo resumen + enlace). Ofertas y barras de cobertura con título **➕ ✏️**. Orden: parámetros → provisiones → resumen.
