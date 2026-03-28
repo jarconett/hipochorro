@@ -70,7 +70,7 @@ HELP_TAE = (
 APIFY_TOKEN_SECRET = "APIFY_TOKEN_SECRET"
 
 # Versión de la aplicación (visible bajo el título y en la pestaña Info; no en el pie del sidebar para no duplicar el branding de Streamlit Cloud)
-VERSION_APP = "1.22.0"
+VERSION_APP = "1.22.2"
 
 # Gastos de compra (sobre precio de la vivienda / ITP)
 ITP_PCT = 7.0           # Impuesto de Transmisiones Patrimoniales: % sobre precio vivienda
@@ -2565,10 +2565,11 @@ def _totales_entrada_gastos(
     provisiones_total: float,
     pct_financiacion: float,
     *,
+    tasacion: float = 0.0,
     pct_comision_inmobiliaria: float | None = None,
     comision_sobre_precio_mas_efectivo_compra: bool = False,
 ) -> dict:
-    """ITP, comisión (sobre precio o precio + efectivo para la compra si aplica), gastos, entrada; neto = bruto − provisiones."""
+    """ITP, comisión (sobre precio o precio + efectivo para la compra si aplica), tasación hipoteca, gastos, entrada; neto = bruto − provisiones."""
     # El % de simulación (widget) manda si viene informado; así la comisión entra en gastos aunque la ficha sea «particular».
     if pct_comision_inmobiliaria is not None:
         pct = max(0.0, float(pct_comision_inmobiliaria))
@@ -2580,8 +2581,15 @@ def _totales_entrada_gastos(
     base_comision = precio_compra + (ef_compra if comision_sobre_precio_mas_efectivo_compra else 0.0)
     comision_inmobiliaria = base_comision * pct / 100.0
     itp = precio_compra * (ITP_PCT / 100.0)
+    tas = max(0.0, float(tasacion or 0))
     gastos_totales = (
-        notaria + registro + gestoria + comision_inmobiliaria + itp + float(efectivo_para_compra or 0)
+        notaria
+        + registro
+        + gestoria
+        + comision_inmobiliaria
+        + itp
+        + float(efectivo_para_compra or 0)
+        + tas
     )
     financiado = precio_compra * pct_financiacion / 100.0
     entrada_compra = precio_compra - financiado
@@ -2593,6 +2601,7 @@ def _totales_entrada_gastos(
         "comision_base_incluye_efectivo": bool(comision_sobre_precio_mas_efectivo_compra),
         "base_comision_inmobiliaria": base_comision,
         "itp": itp,
+        "tasacion": tas,
         "gastos_totales": gastos_totales,
         "efectivo_para_compra": float(efectivo_para_compra or 0),
         "provisiones_total": float(provisiones_total or 0),
@@ -2768,6 +2777,8 @@ def _aplicar_payload_oferta_entrada_a_session(pend_oferta: dict, inv_id: int, in
     k_com_pct = f"entrada_comision_pct_{inv_id}"
     k_com_chk = f"entrada_comision_chk_precio_ef_{inv_id}"
     _k_com_chk_ant = f"entrada_comision_base_ef_{inv_id}"
+    k_tas = f"entrada_tasacion_{inv_id}"
+    k_tas_sync = f"_entrada_tasacion_sync_hipo_{inv_id}"
     k_edit = f"entrada_oferta_edit_id_{inv_id}"
     k_nombre = f"entrada_nombre_oferta_{inv_id}"
     k_notas = f"entrada_notas_oferta_{inv_id}"
@@ -2782,6 +2793,7 @@ def _aplicar_payload_oferta_entrada_a_session(pend_oferta: dict, inv_id: int, in
         k_com_pct,
         k_com_chk,
         _k_com_chk_ant,
+        k_tas,
         k_nombre,
         k_notas,
         k_estado,
@@ -2837,6 +2849,8 @@ def _aplicar_payload_oferta_entrada_a_session(pend_oferta: dict, inv_id: int, in
         else (inv.get("comision_venta_pct", 0) or 0)
     )
     st.session_state[k_com_chk] = bool(pend_oferta.get("comision_base_incluye_efectivo", False))
+    st.session_state[k_tas] = float(pend_oferta.get("tasacion", 0) or 0)
+    st.session_state[k_tas_sync] = int(pend_oferta.get("hipoteca_id", 0) or 0)
 
 
 def _flush_pending_entrada_oferta_antes_sidebar(usuario_id: int) -> None:
@@ -2857,6 +2871,12 @@ def _flush_pending_entrada_oferta_antes_sidebar(usuario_id: int) -> None:
     pend = st.session_state.pop(f"_entrada_aplicar_oferta_{inv_id}", None)
     if pend is None:
         return
+    pend = dict(pend)
+    if pend.get("tasacion") is None:
+        hid_o = int(pend.get("hipoteca_id") or 0)
+        h_o = next((x for x in hipotecas if int(x.get("id") or 0) == hid_o), None)
+        if h_o is not None:
+            pend["tasacion"] = float(h_o.get("tasacion", 0) or 0)
     _aplicar_payload_oferta_entrada_a_session(pend, inv_id, inv)
 
 
@@ -2934,6 +2954,7 @@ def _doc_sim_entrada_desde_session_actual(usuario_id: int) -> dict | None:
     k_fin = f"entrada_fin_espec_{inv_id}"
     k_cpct = f"entrada_comision_pct_{inv_id}"
     k_cchk = f"entrada_comision_chk_precio_ef_{inv_id}"
+    k_tas = f"entrada_tasacion_{inv_id}"
     pf = max(float(inv.get("importe") or 0), 0.0)
     precio = float(st.session_state.get(k_precio, pf) or 0)
     notaria = float(st.session_state.get(k_not, 1000.0) or 1000.0)
@@ -2946,6 +2967,7 @@ def _doc_sim_entrada_desde_session_actual(usuario_id: int) -> dict | None:
         or 0.0
     )
     com_chk = bool(st.session_state.get(k_cchk, False))
+    tas_doc = float(st.session_state.get(k_tas, float(h.get("tasacion", 0) or 0)) or 0)
     _, pct_fin, _mod = _parse_financiacion_entrada(_raw_fin, precio)
     if _mod in ("error", "vacio"):
         pct_fin = 90.0 if precio > 0 else 0.0
@@ -2961,6 +2983,7 @@ def _doc_sim_entrada_desde_session_actual(usuario_id: int) -> dict | None:
         ef_compra,
         provisiones_total,
         pct_fin,
+        tasacion=tas_doc,
         pct_comision_inmobiliaria=pct_com,
         comision_sobre_precio_mas_efectivo_compra=com_chk,
     )
@@ -2979,6 +3002,7 @@ def _doc_sim_entrada_desde_session_actual(usuario_id: int) -> dict | None:
         "registro": registro,
         "gestoria": gestoria,
         "efectivo_para_compra": ef_compra,
+        "tasacion": tas_doc,
         "comision_inmobiliaria_pct": pct_com,
         "comision_base_incluye_efectivo": com_chk,
         "efectivo_por_concepto": imp,
@@ -3001,6 +3025,8 @@ def _aplicar_sim_entrada_guardada_a_session(doc: dict, inv_id: int, inv: dict) -
     k_com_pct = f"entrada_comision_pct_{inv_id}"
     k_com_chk = f"entrada_comision_chk_precio_ef_{inv_id}"
     _k_com_chk_ant = f"entrada_comision_base_ef_{inv_id}"
+    k_tas = f"entrada_tasacion_{inv_id}"
+    k_tas_sync = f"_entrada_tasacion_sync_hipo_{inv_id}"
     k_edit = f"entrada_oferta_edit_id_{inv_id}"
     k_nombre = f"entrada_nombre_oferta_{inv_id}"
     k_notas = f"entrada_notas_oferta_{inv_id}"
@@ -3015,6 +3041,7 @@ def _aplicar_sim_entrada_guardada_a_session(doc: dict, inv_id: int, inv: dict) -
         k_com_pct,
         k_com_chk,
         _k_com_chk_ant,
+        k_tas,
         k_nombre,
         k_notas,
         k_estado,
@@ -3026,6 +3053,8 @@ def _aplicar_sim_entrada_guardada_a_session(doc: dict, inv_id: int, inv: dict) -
     st.session_state[k_reg] = float(doc.get("registro", 600) or 600)
     st.session_state[k_ges] = float(doc.get("gestoria", GESTORIA_EUR) or GESTORIA_EUR)
     st.session_state[k_ef_compra] = float(doc.get("efectivo_para_compra", 0) or 0)
+    st.session_state[k_tas] = float(doc.get("tasacion", 0) or 0)
+    st.session_state[k_tas_sync] = int(doc.get("hipoteca_id", 0) or 0)
     st.session_state[k_fin_txt] = str(doc.get("financiacion_txt") or "90%").strip() or "90%"
     st.session_state[k_com_pct] = float(
         doc.get("comision_inmobiliaria_pct")
@@ -3201,6 +3230,8 @@ def _tab_entrada_gastos_financiacion(usuario_id: int):
     k_com_chk = f"entrada_comision_chk_precio_ef_{inv_id}"
     _k_com_chk_ant = f"entrada_comision_base_ef_{inv_id}"
     k_edit = f"entrada_oferta_edit_id_{inv_id}"
+    k_tas = f"entrada_tasacion_{inv_id}"
+    k_tas_sync = f"_entrada_tasacion_sync_hipo_{inv_id}"
 
     precio_ficha = float(inv.get("importe", 0) or 0)
 
@@ -3242,6 +3273,9 @@ def _tab_entrada_gastos_financiacion(usuario_id: int):
             st.session_state[k_com_chk] = bool(st.session_state.pop(_k_com_chk_ant))
         else:
             st.session_state[k_com_chk] = False
+    if st.session_state.get(k_tas_sync) != hipoteca_id:
+        st.session_state[k_tas] = float(h.get("tasacion", 0) or 0)
+        st.session_state[k_tas_sync] = hipoteca_id
 
     st.subheader("Entrada y gastos para financiación")
     st.caption(
@@ -3292,7 +3326,7 @@ def _tab_entrada_gastos_financiacion(usuario_id: int):
         st.markdown(
             '<p style="border-left:4px solid #b91c1c;padding:10px 14px;background:rgba(185,28,28,0.08);border-radius:8px;margin:12px 0 8px 0;">'
             '<strong style="color:#991b1b">Gastos de compra</strong> '
-            "<span style=\"color:#64748b\">— salidas: tasas, honorarios, comisión, efectivo para la compra…</span></p>",
+            "<span style=\"color:#64748b\">— salidas: tasas, honorarios, tasación hipoteca, comisión, efectivo para la compra…</span></p>",
             unsafe_allow_html=True,
         )
         gc1, gc2 = st.columns(2)
@@ -3324,6 +3358,18 @@ def _tab_entrada_gastos_financiacion(usuario_id: int):
             )
         )
         st.caption(f"Gestoría: valor inicial **{GESTORIA_EUR:.0f} €** si no hay oferta guardada; edita arriba como el resto de gastos.")
+
+        _tas_ficha = float(h.get("tasacion", 0) or 0)
+        st.number_input(
+            "Tasación (€)",
+            min_value=0.0,
+            step=50.0,
+            key=k_tas,
+            help=(
+                "Coste del informe de tasación asociado a la hipoteca seleccionada; **se suma a gastos de compra**. "
+                f"Al cambiar de hipoteca se rellena con la ficha (**{_tas_ficha:.0f} €** en el producto actual); puedes ajustarlo."
+            ),
+        )
 
         efectivo_para_compra = float(
             st.number_input(
@@ -3392,10 +3438,12 @@ def _tab_entrada_gastos_financiacion(usuario_id: int):
         efectivo_para_compra,
         provisiones_total,
         pct_financiacion,
+        tasacion=float(st.session_state.get(k_tas, 0) or 0),
         pct_comision_inmobiliaria=pct_comision_sim,
         comision_sobre_precio_mas_efectivo_compra=comision_sobre_precio_mas_ef_compra,
     )
     itp = tot["itp"]
+    tasacion_eur = float(tot.get("tasacion", 0) or 0)
     gastos_totales = tot["gastos_totales"]
     entrada_compra = tot["entrada_compra"]
     total_entrada = tot["total_a_aportar"]
@@ -3490,17 +3538,18 @@ def _tab_entrada_gastos_financiacion(usuario_id: int):
             )
 
     valor_medio_barrio = float(inv.get("valor_medio_barrio", 0) or 0)
+    # Tasación mínima orientativa: el banco suele ceñir el préstamo al % de tasación (p. ej. 80 %), no el precio total.
     tasacion_objetivo = (
-        (precio_compra / PRECIO_COMPRA_FRACCION_TASACION) if precio_compra > 0 else 0.0
+        (financiado / PRECIO_COMPRA_FRACCION_TASACION) if financiado > 0 else 0.0
     )
     col_tas_l, col_tas_r = st.columns(2)
     with col_tas_l:
         st.markdown(
             '<div style="font-size:0.875rem;color:rgba(93,158,134,0.6);margin-bottom:0.25rem;">'
-            "Tasación objetivo (si el banco exige que el precio sea el <strong>80%</strong> de la tasación)</div>",
+            "Tasación objetivo (si el banco exige que el <strong>importe financiado</strong> sea el <strong>80%</strong> de la tasación)</div>",
             unsafe_allow_html=True,
         )
-        if precio_compra <= 0:
+        if precio_compra <= 0 or financiado <= 0:
             t_txt, t_col = "—", "#64748b"
         elif valor_medio_barrio <= 0:
             t_txt, t_col = f"{tasacion_objetivo:.0f} €", "#64748b"
@@ -3514,10 +3563,15 @@ def _tab_entrada_gastos_financiacion(usuario_id: int):
             f'<div style="font-size:1.35rem;font-weight:600;color:{t_col};">{html.escape(t_txt)}</div>',
             unsafe_allow_html=True,
         )
-        st.caption(
-            f"Orientativo: precio de compra simulado ÷ {PRECIO_COMPRA_FRACCION_TASACION:.2f} "
-            f"({PRECIO_COMPRA_FRACCION_TASACION:.0%} del valor de tasación)."
-        )
+        if financiado > 0:
+            st.caption(
+                f"Orientativo: importe **financiado** sobre el precio ({financiado:,.0f} €) ÷ {PRECIO_COMPRA_FRACCION_TASACION:.2f} "
+                f"(supuesto: ese préstamo es el {PRECIO_COMPRA_FRACCION_TASACION:.0%} de la tasación)."
+            )
+        elif precio_compra > 0:
+            st.caption("Sin **importe financiado** (0 €) no aplica el cociente con la tasación; ajusta precio y financiación/entrada.")
+        else:
+            st.caption("Indica **precio de compra** y financiación para ver la tasación orientativa.")
     with col_tas_r:
         st.markdown(
             '<div style="font-size:0.875rem;color:rgba(49,51,63,0.6);margin-bottom:0.25rem;">'
@@ -3534,9 +3588,9 @@ def _tab_entrada_gastos_financiacion(usuario_id: int):
                 '<div style="font-size:1rem;color:#94a3b8;">— (sin dato en ficha)</div>',
                 unsafe_allow_html=True,
             )
-    if precio_compra > 0 and valor_medio_barrio <= 0:
+    if precio_compra > 0 and financiado > 0 and valor_medio_barrio <= 0:
         st.caption("Rellena **Valor medio viviendas del barrio** en la ficha del inmueble para ver verde/rojo según la comparación con la tasación objetivo.")
-    elif precio_compra > 0 and valor_medio_barrio > 0:
+    elif precio_compra > 0 and financiado > 0 and valor_medio_barrio > 0:
         if tasacion_objetivo > valor_medio_barrio:
             st.caption(
                 "La tasación orientativa supera la **media del barrio** de la ficha (contexto más exigente para la valoración)."
@@ -3623,7 +3677,10 @@ def _tab_entrada_gastos_financiacion(usuario_id: int):
     st.caption(f"Precio en ficha del inmueble: {precio_ficha:.0f} € (referencia)")
     st.caption(f"Precio simulado: {precio_compra:.0f} €")
     st.caption(f"I.T.P ({ITP_PCT}%): {itp:.0f} €")
-    st.caption(f"Notaría: {notaria:.0f} € · Registro: {registro:.0f} € · Gestoría: {gestoria:.0f} €")
+    st.caption(
+        f"Notaría: {notaria:.0f} € · Registro: {registro:.0f} € · Gestoría: {gestoria:.0f} € · "
+        f"Tasación (hipoteca): {tasacion_eur:.0f} €"
+    )
     st.markdown(
         f'<p style="color:#991b1b;margin:0.2em 0;">Dinero en efectivo para la compra: <strong>{efectivo_para_compra:.0f} €</strong></p>',
         unsafe_allow_html=True,
@@ -3642,12 +3699,13 @@ def _tab_entrada_gastos_financiacion(usuario_id: int):
         st.caption("Comisión inmobiliaria: 0 € (particular o sin comisión)")
     st.markdown(
         f'<p style="color:#991b1b;margin:0.2em 0;">Suma gastos de compra '
-        f"(I.T.P., notaría, registro, gestoría, <strong>comisión inmobiliaria</strong> si aplica, efectivo para compra): "
+        f"(I.T.P., notaría, registro, gestoría, <strong>tasación</strong>, <strong>comisión inmobiliaria</strong> si aplica, efectivo para compra): "
         f"<strong>{gastos_totales:.0f} €</strong></p>",
         unsafe_allow_html=True,
     )
     st.caption(
-        f"Comprobación: {notaria:.0f} + {registro:.0f} + {gestoria:.0f} + {itp:.0f} + {comision_inmobiliaria:.0f} + {efectivo_para_compra:.0f} = {gastos_totales:.0f} €"
+        f"Comprobación: {notaria:.0f} + {registro:.0f} + {gestoria:.0f} + {itp:.0f} + {comision_inmobiliaria:.0f} + "
+        f"{efectivo_para_compra:.0f} + {tasacion_eur:.0f} (tasación) = {gastos_totales:.0f} €"
     )
 
     st.markdown(
@@ -3755,6 +3813,7 @@ def _tab_entrada_gastos_financiacion(usuario_id: int):
         notas_of = st.text_area("Notas (opcional)", key=f"entrada_notas_oferta_{inv_id}", height=68)
     
         def _payload_oferta() -> dict:
+            _tas_o = float(st.session_state.get(k_tas, 0) or 0)
             t2 = _totales_entrada_gastos(
                 precio_compra,
                 inv,
@@ -3764,6 +3823,7 @@ def _tab_entrada_gastos_financiacion(usuario_id: int):
                 efectivo_para_compra,
                 provisiones_total,
                 pct_financiacion,
+                tasacion=_tas_o,
                 pct_comision_inmobiliaria=pct_comision_sim,
                 comision_sobre_precio_mas_efectivo_compra=comision_sobre_precio_mas_ef_compra,
             )
@@ -3777,6 +3837,7 @@ def _tab_entrada_gastos_financiacion(usuario_id: int):
                 "registro": registro,
                 "gestoria": gestoria,
                 "efectivo_para_compra": efectivo_para_compra,
+                "tasacion": _tas_o,
                 "provisiones_total": provisiones_total,
                 "total_bruto_antes_provisiones": t2["total_bruto_antes_provisiones"],
                 "efectivo_adicional": provisiones_total,
@@ -4757,6 +4818,8 @@ def main():
         st.subheader("Changelog")
         st.markdown(f"**Versión actual: {VERSION_APP}**")
         st.markdown("""
+        - **1.22.2** — **Tasación objetivo** (orientativa): se calcula con el **importe financiado** del préstamo sobre el precio (no con el precio completo), supuesto 80 % de tasación; textos de ayuda actualizados.
+        - **1.22.1** — **Entrada y gastos:** campo **Tasación (€)** editable (por defecto el de la hipoteca seleccionada al cambiar de producto); se **suma a gastos de compra** y entra en ofertas guardadas y snapshots de simulación. Ofertas antiguas sin `tasacion` usan el importe de la ficha de la hipoteca de la oferta al cargar.
         - **1.22.0** — **Sidebar:** guardar y cargar **simulaciones de Entrada y gastos** + **cuadro de amortización** (30 años) en GitHub (`data/simulaciones_entrada/`). **Estado del sidebar** (GPS, inmueble simulado, hipoteca/inmueble en Entrada, oferta del desplegable) persistido en `data/ui_state/` y **restaurado al iniciar sesión** si pulsas *Guardar estado del sidebar*. Botón **Recalcular** en el cuadro de amortización para descartar un snapshot cargado.
         - **1.21.0** — **Entrada y gastos:** campo **Financiación / entrada** como texto: `%` = % sobre precio; **negativo** = capital prestado (€); **positivo** = entrada (€); tooltip y leyenda. **Cuadro amortización francesa** 360 cuotas (30 años) con TIN de la hipoteca y capital financiado + CSV. **Sidebar:** selector de **perfil de provisiones** en expander (carga simulación en GitHub).
         - **1.20.7** — **Sidebar:** eliminado el pie «Hipochorro v…» que se **duplicaba** con el encabezado de la app en Streamlit Cloud. La **versión** queda bajo el título principal y en **Info**.
@@ -4767,7 +4830,7 @@ def main():
         - **1.20.2** — **Entrada y gastos:** en el resumen, **indicadores visuales**: barras apiladas (financiación del precio; composición del bruto), **gráfico de barras** entrada vs gastos, barra **st.progress** de cobertura de provisiones frente al bruto, gráfica **tasación vs media del barrio** (o solo tasación si falta la media), bloque **Hipoteca y provisiones** con métricas.
         - **1.20.1** — **Sidebar:** expander **Oferta → Entrada y gastos** para elegir una oferta guardada en GitHub y cargar la simulación (misma lógica que «Cargar en la simulación» en la pestaña); el selector se sincroniza al cargar desde la pestaña y se resetea si eliminas esa oferta.
         - **1.20.0** — **UI Material 3:** formularios de alta en expanders **➕** (hipotecas, inmuebles, ofertas, perfiles de provisiones); edición en expanders **✏️**; **provisiones** en sidebar colapsadas por defecto; tarjetas de **conclusión** (comparador hipotecas, vivienda seleccionada, comparador inmuebles, amortizar/invertir, efecto amortización extra). Tema y CSS alineados con paleta tipo Android/Material 3.
-        - **1.19.5** — **Entrada y gastos:** tras el neto a aportar, **tasación objetivo** (precio simulado ÷ 0,80, supuesto precio = 80% tasación) junto al **valor medio del barrio** de la ficha; rojo y con signo negativo si la tasación orientativa supera esa media, verde si queda por debajo.
+        - **1.19.5** — **Entrada y gastos:** tras el neto a aportar, **tasación objetivo** junto al **valor medio del barrio** de la ficha; rojo y con signo negativo si la tasación orientativa supera esa media, verde si queda por debajo. (Cociente orientativo: **importe financiado** ÷ 0,80 desde **1.22.2**; antes usaba el precio simulado.)
         - **1.19.4** — **Gastos de compra:** el % de comisión de la simulación **siempre** puede aplicarse (controles visibles aunque la ficha sea particular); se usa ese % en `gastos_totales`, así la suma incluye comisión cuando el porcentaje es mayor que cero. La línea de suma y la comprobación numérica listan I.T.P., tasas y comisión.
         - **1.19.3** — **Comisión inmobiliaria:** si marcas la casilla extendida, el % se aplica sobre **precio de compra + dinero en efectivo para la compra** (ya no sobre precio + provisiones de fondos). Sigue guardándose en ofertas como `comision_base_incluye_efectivo` (ofertas viejas con la casilla activa usan este criterio al recargar).
         - **1.19.2** — **Provisiones de fondos:** los **perfiles** guardados en GitHub (antes «combinaciones») son escenarios distintos de importes + Incluir; **selector y edición** en el **sidebar**; la pestaña *Entrada y gastos* conserva actualizar / crear / eliminar perfil. Mismo JSON en `data/aportacion_efectivo/`.
