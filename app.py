@@ -71,10 +71,12 @@ HELP_TAE = (
 APIFY_TOKEN_SECRET = "APIFY_TOKEN_SECRET"
 
 # Versión de la aplicación (visible bajo el título y en la pestaña Info; no en el pie del sidebar para no duplicar el branding de Streamlit Cloud)
-VERSION_APP = "1.22.2"
+VERSION_APP = "1.22.3"
 
 # Gastos de compra (sobre precio de la vivienda / ITP)
 ITP_PCT = 7.0           # Impuesto de Transmisiones Patrimoniales: % sobre precio vivienda
+# IVA sobre la base imponible de la comisión de agencia inmobiliaria (servicios)
+IVA_COMISION_INMOBILIARIA_PCT = 21.0
 # Supuesto banco (orientativo en «Entrada y gastos»): precio de compra = este % del valor de tasación
 PRECIO_COMPRA_FRACCION_TASACION = 0.8
 
@@ -662,33 +664,37 @@ def _descargar_imagen_bytes(url: str) -> bytes | None:
     return None
 
 
-def _desglose_gastos_compra(inv: dict) -> dict:
+def _desglose_gastos_compra(inv: dict, *, tasacion_hipoteca: float = 0.0) -> dict:
     """
-    Desglose de gastos de compra: precio, comisión, ITP, notaría, registro, gestoría.
+    Desglose de gastos de compra: precio, comisión, IVA sobre comisión, ITP, notaría, registro, gestoría, tasación (opc.).
     Notaría y registro son un % del importe del ITP.
     """
     precio = float(inv.get("importe", 0) or 0)
     comision = 0.0
     if inv.get("inmobiliaria"):
         comision = precio * (float(inv.get("comision_venta_pct", 0) or 0) / 100.0)
+    iva_comision = comision * (IVA_COMISION_INMOBILIARIA_PCT / 100.0) if comision > 0 else 0.0
     itp = precio * (ITP_PCT / 100.0)
     notaria = itp * (NOTARIA_PCT_DEL_ITP / 100.0)
     registro = itp * (REGISTRO_PCT_DEL_ITP / 100.0)
     gestoria = GESTORIA_EUR
-    total = precio + comision + itp + notaria + registro + gestoria
+    tas = max(0.0, float(tasacion_hipoteca or 0))
+    total = precio + comision + iva_comision + itp + notaria + registro + gestoria + tas
     return {
         "precio": precio,
         "comision": comision,
+        "iva_comision": iva_comision,
         "itp": itp,
         "notaria": notaria,
         "registro": registro,
         "gestoria": gestoria,
+        "tasacion": tas,
         "total": total,
     }
 
 
 def _coste_total_inmueble(inv: dict) -> float:
-    """Coste total de compra: importe + comisión inmobiliaria + ITP (7%) + notaría (10% ITP) + registro (10% ITP) + gestoría (300 €)."""
+    """Coste total de compra: importe + comisión + IVA comisión + ITP + notaría + registro + gestoría (sin tasación de agenda)."""
     return _desglose_gastos_compra(inv)["total"]
 
 
@@ -2040,7 +2046,10 @@ def agenda_inmuebles(usuario_id: int):
                     if inv.get("notas"):
                         st.caption(f"📝 **Notas:** {inv.get('notas')}")
                     d = _desglose_gastos_compra(inv)
-                    st.caption(f"Coste total compra: **{d['total']:.0f} €** (precio + comisión + ITP {ITP_PCT}% + notaría + registro + gestoría {GESTORIA_EUR:.0f} €)")
+                    st.caption(
+                        f"Coste total compra: **{d['total']:.0f} €** (precio + comisión + IVA {IVA_COMISION_INMOBILIARIA_PCT}% comisión + ITP {ITP_PCT}% + "
+                        f"notaría + registro + gestoría {GESTORIA_EUR:.0f} €)"
+                    )
                     valoracion_eur = float(inv.get("valoracion", 0) or 0)
                     if valoracion_eur > 0:
                         precio_eur = float(inv.get("importe", 0) or 0)
@@ -2581,6 +2590,9 @@ def _totales_entrada_gastos(
     ef_compra = float(efectivo_para_compra or 0)
     base_comision = precio_compra + (ef_compra if comision_sobre_precio_mas_efectivo_compra else 0.0)
     comision_inmobiliaria = base_comision * pct / 100.0
+    iva_comision_inmobiliaria = (
+        comision_inmobiliaria * (IVA_COMISION_INMOBILIARIA_PCT / 100.0) if comision_inmobiliaria > 0 else 0.0
+    )
     itp = precio_compra * (ITP_PCT / 100.0)
     tas = max(0.0, float(tasacion or 0))
     gastos_totales = (
@@ -2588,6 +2600,7 @@ def _totales_entrada_gastos(
         + registro
         + gestoria
         + comision_inmobiliaria
+        + iva_comision_inmobiliaria
         + itp
         + float(efectivo_para_compra or 0)
         + tas
@@ -2599,6 +2612,7 @@ def _totales_entrada_gastos(
     return {
         "comision_inmobiliaria_pct": pct,
         "comision_inmobiliaria": comision_inmobiliaria,
+        "iva_comision_inmobiliaria": iva_comision_inmobiliaria,
         "comision_base_incluye_efectivo": bool(comision_sobre_precio_mas_efectivo_compra),
         "base_comision_inmobiliaria": base_comision,
         "itp": itp,
@@ -3004,6 +3018,8 @@ def _doc_sim_entrada_desde_session_actual(usuario_id: int) -> dict | None:
         "gestoria": gestoria,
         "efectivo_para_compra": ef_compra,
         "tasacion": tas_doc,
+        "iva_comision_inmobiliaria_pct": IVA_COMISION_INMOBILIARIA_PCT,
+        "iva_comision_inmobiliaria": float(tot.get("iva_comision_inmobiliaria") or 0),
         "comision_inmobiliaria_pct": pct_com,
         "comision_base_incluye_efectivo": com_chk,
         "efectivo_por_concepto": imp,
@@ -3013,6 +3029,22 @@ def _doc_sim_entrada_desde_session_actual(usuario_id: int) -> dict | None:
         "amort_meses": meses_am,
         "amort_filas": filas,
     }
+
+
+def _guardar_sim_entrada_github(usuario_id: int, nombre: str) -> tuple[bool, str]:
+    """
+    Guarda en GitHub el snapshot actual de Entrada + cuadro de amortización.
+    Devuelve (True, nombre) si ok; (False, 'no_datos'|'github_error').
+    """
+    doc = _doc_sim_entrada_desde_session_actual(usuario_id)
+    if not doc:
+        return False, "no_datos"
+    nom = (nombre or "").strip() or "Sin nombre"
+    doc["nombre"] = nom
+    doc["fecha_creado"] = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    if ghd.añadir_simulacion_entrada(usuario_id, doc):
+        return True, nom
+    return False, "github_error"
 
 
 def _aplicar_sim_entrada_guardada_a_session(doc: dict, inv_id: int, inv: dict) -> None:
@@ -3410,6 +3442,28 @@ def _tab_entrada_gastos_financiacion(usuario_id: int):
         if not inv.get("inmobiliaria") and pct_comision_sim <= 0:
             st.caption("Ficha **particular**: el % suele ser 0; si subes el %, la comisión **sí entra** en la suma de gastos de compra.")
 
+        st.markdown("---")
+        st.markdown("**Guardar en GitHub**")
+        st.caption(
+            "Mismo guardado que en el sidebar «Simulación Entrada + amortización»: parámetros actuales y cuadro de amortización a 30 años."
+        )
+        st.text_input(
+            "Nombre del escenario",
+            key=f"entrada_inline_nombre_sim_{inv_id}",
+            placeholder="Ej. Escenario marzo",
+        )
+        if st.button("💾 Guardar parámetros y cuadro (GitHub)", key=f"entrada_btn_guardar_sim_inline_{inv_id}"):
+            ok, code = _guardar_sim_entrada_github(
+                usuario_id, str(st.session_state.get(f"entrada_inline_nombre_sim_{inv_id}") or "")
+            )
+            if ok:
+                st.success(f"Guardado en GitHub: «{code}»")
+                st.rerun()
+            elif code == "no_datos":
+                st.warning("No hay datos suficientes para guardar (hipotecas e inmuebles en la agenda).")
+            else:
+                st.error("No se pudo guardar (¿GITHUB_TOKEN?).")
+
     _ui_aportacion_fondos_entrada_tab(usuario_id)
 
     # precio_compra ya viene del number_input del expander (mismo rerun que la leyenda de financiación).
@@ -3451,6 +3505,7 @@ def _tab_entrada_gastos_financiacion(usuario_id: int):
     total_bruto = tot["total_bruto_antes_provisiones"]
     comision_inmobiliaria_pct = tot["comision_inmobiliaria_pct"]
     comision_inmobiliaria = tot["comision_inmobiliaria"]
+    iva_comision_inmobiliaria = float(tot.get("iva_comision_inmobiliaria") or 0)
     base_comision = tot["base_comision_inmobiliaria"]
 
     st.markdown("---")
@@ -3696,17 +3751,21 @@ def _tab_entrada_gastos_financiacion(usuario_id: int):
             f"Comisión inmobiliaria ({comision_inmobiliaria_pct:.1f}% sobre {base_txt}): {comision_inmobiliaria:.0f} € "
             f"(base imponible comisión: {base_comision:.0f} €)"
         )
+        st.caption(
+            f"IVA sobre comisión inmobiliaria ({IVA_COMISION_INMOBILIARIA_PCT}% sobre la comisión): {iva_comision_inmobiliaria:.0f} €"
+        )
     else:
         st.caption("Comisión inmobiliaria: 0 € (particular o sin comisión)")
     st.markdown(
         f'<p style="color:#991b1b;margin:0.2em 0;">Suma gastos de compra '
-        f"(I.T.P., notaría, registro, gestoría, <strong>tasación</strong>, <strong>comisión inmobiliaria</strong> si aplica, efectivo para compra): "
+        f"(I.T.P., notaría, registro, gestoría, <strong>tasación</strong>, comisión inmobiliaria si aplica, "
+        f"<strong>IVA sobre comisión</strong> si aplica, efectivo para compra): "
         f"<strong>{gastos_totales:.0f} €</strong></p>",
         unsafe_allow_html=True,
     )
     st.caption(
         f"Comprobación: {notaria:.0f} + {registro:.0f} + {gestoria:.0f} + {itp:.0f} + {comision_inmobiliaria:.0f} + "
-        f"{efectivo_para_compra:.0f} + {tasacion_eur:.0f} (tasación) = {gastos_totales:.0f} €"
+        f"{iva_comision_inmobiliaria:.0f} (IVA comisión) + {efectivo_para_compra:.0f} + {tasacion_eur:.0f} (tasación) = {gastos_totales:.0f} €"
     )
 
     st.markdown(
@@ -3855,6 +3914,7 @@ def _tab_entrada_gastos_financiacion(usuario_id: int):
                 "itp": t2["itp"],
                 "comision_inmobiliaria_pct": t2["comision_inmobiliaria_pct"],
                 "comision_inmobiliaria": t2["comision_inmobiliaria"],
+                "iva_comision_inmobiliaria": float(t2.get("iva_comision_inmobiliaria") or 0),
                 "gastos_totales_compra": t2["gastos_totales"],
                 "entrada_compra": t2["entrada_compra"],
                 "total_a_aportar": t2["total_a_aportar"],
@@ -4614,17 +4674,28 @@ def main():
     st.session_state.inmueble_seleccionado = lista_inv_ordenada[idx_sel] if idx_sel < len(lista_inv_ordenada) else None
     if st.session_state.inmueble_seleccionado:
         inv = st.session_state.inmueble_seleccionado
-        d = _desglose_gastos_compra(inv)
+        _hips_sb = ghd.get_hipotecas(u["id"])
+        tas_sidebar = 0.0
+        if _hips_sb:
+            _opts_h_sb = _opts_hipo_entrada_labels(_hips_sb)
+            _sel_h_ent = st.session_state.get("entrada_sel_hipo")
+            if _sel_h_ent in _opts_h_sb:
+                _ix_h = _opts_h_sb.index(_sel_h_ent)
+                tas_sidebar = float(_hips_sb[_ix_h].get("tasacion", 0) or 0)
+        d = _desglose_gastos_compra(inv, tasacion_hipoteca=tas_sidebar)
         coste = d["total"]
         st.sidebar.caption(f"Coste total compra: **{coste:.0f} €**")
         with st.sidebar.expander("Desglose gastos compra"):
             st.caption(f"Precio: {d['precio']:.0f} €")
             if d["comision"] > 0:
                 st.caption(f"Comisión: {d['comision']:.0f} €")
+                st.caption(f"IVA comisión ({IVA_COMISION_INMOBILIARIA_PCT}%): {d['iva_comision']:.0f} €")
             st.caption(f"ITP ({ITP_PCT}%): {d['itp']:.0f} €")
             st.caption(f"Notaría ({NOTARIA_PCT_DEL_ITP}% ITP): {d['notaria']:.0f} €")
             st.caption(f"Registro ({REGISTRO_PCT_DEL_ITP}% ITP): {d['registro']:.0f} €")
             st.caption(f"Gestoría: {d['gestoria']:.0f} €")
+            if d.get("tasacion", 0) > 0:
+                st.caption(f"Tasación (hipoteca en Entrada y gastos): {d['tasacion']:.0f} €")
             st.caption("---")
             st.caption(f"**Total gastos compra: {d['total']:.0f} €**")
 
@@ -4694,18 +4765,14 @@ def main():
         else:
             st.text_input("Nombre al guardar", key="sidebar_sim_entrada_nombre", placeholder="Ej. Escenario marzo")
             if st.button("💾 Guardar simulación + cuadro (GitHub)", key="btn_guardar_sim_entrada"):
-                doc = _doc_sim_entrada_desde_session_actual(u["id"])
-                if doc:
-                    nom = (st.session_state.get("sidebar_sim_entrada_nombre") or "").strip() or "Sin nombre"
-                    doc["nombre"] = nom
-                    doc["fecha_creado"] = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-                    if ghd.añadir_simulacion_entrada(u["id"], doc):
-                        st.sidebar.success(f"Guardado: «{nom}»")
-                        st.rerun()
-                    else:
-                        st.sidebar.error("No se pudo guardar (¿GITHUB_TOKEN?).")
-                else:
+                ok, code = _guardar_sim_entrada_github(u["id"], st.session_state.get("sidebar_sim_entrada_nombre") or "")
+                if ok:
+                    st.sidebar.success(f"Guardado: «{code}»")
+                    st.rerun()
+                elif code == "no_datos":
                     st.sidebar.warning("No hay datos suficientes para guardar.")
+                else:
+                    st.sidebar.error("No se pudo guardar (¿GITHUB_TOKEN?).")
 
             _sims_sb = ghd.get_simulaciones_entrada(u["id"])
             _sim_id_opts = [-1] + [int(s.get("id") or 0) for s in _sims_sb if int(s.get("id") or 0) > 0]
@@ -4819,6 +4886,7 @@ def main():
         st.subheader("Changelog")
         st.markdown(f"**Versión actual: {VERSION_APP}**")
         st.markdown("""
+        - **1.22.3** — **IVA 21 %** sobre la **comisión inmobiliaria** (base = comisión, no precio) sumado a **gastos de compra**; reflejado en desglose, comprobación y ofertas. **Sidebar:** desglose con IVA, **tasación** de la hipoteca elegida en *Entrada y gastos* y total coherente. **Parámetros de simulación:** botón **Guardar parámetros y cuadro (GitHub)** (misma lógica que el sidebar).
         - **1.22.2** — **Tasación objetivo** (orientativa): se calcula con el **importe financiado** del préstamo sobre el precio (no con el precio completo), supuesto 80 % de tasación; textos de ayuda actualizados.
         - **1.22.1** — **Entrada y gastos:** campo **Tasación (€)** editable (por defecto el de la hipoteca seleccionada al cambiar de producto); se **suma a gastos de compra** y entra en ofertas guardadas y snapshots de simulación. Ofertas antiguas sin `tasacion` usan el importe de la ficha de la hipoteca de la oferta al cargar.
         - **1.22.0** — **Sidebar:** guardar y cargar **simulaciones de Entrada y gastos** + **cuadro de amortización** (30 años) en GitHub (`data/simulaciones_entrada/`). **Estado del sidebar** (GPS, inmueble simulado, hipoteca/inmueble en Entrada, oferta del desplegable) persistido en `data/ui_state/` y **restaurado al iniciar sesión** si pulsas *Guardar estado del sidebar*. Botón **Recalcular** en el cuadro de amortización para descartar un snapshot cargado.
