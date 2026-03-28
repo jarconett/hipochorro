@@ -50,6 +50,7 @@ except Exception:  # pragma: no cover
     st_folium = None  # type: ignore
 
 ASSETS_DIR = Path(__file__).parent / "assets"
+# Marca principal de la app (portada en `main()` e icono de pestaña si existe el fichero).
 LOGO_APP_PATH = ASSETS_DIR / "logo.png"
 FAVICON_PATH = ASSETS_DIR / "favicon.png"
 
@@ -318,12 +319,12 @@ def _cargar_imagen(path: Path):
     return None
 
 
-_favicon_img = _cargar_imagen(FAVICON_PATH)
+# Misma identidad que la portada: `assets/logo.png`; si no hay PIL o falta el archivo, `favicon.png` o emoji.
+_page_icon_img = _cargar_imagen(LOGO_APP_PATH) or _cargar_imagen(FAVICON_PATH)
 
-# Configuración de página (favicon)
 st.set_page_config(
     page_title="Hipochorro - Comparador de Hipotecas",
-    page_icon=_favicon_img if _favicon_img is not None else "🏠",
+    page_icon=_page_icon_img if _page_icon_img is not None else "🏠",
     layout="wide",
     initial_sidebar_state="expanded",
 )
