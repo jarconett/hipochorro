@@ -71,7 +71,7 @@ HELP_TAE = (
 APIFY_TOKEN_SECRET = "APIFY_TOKEN_SECRET"
 
 # Versión de la aplicación (visible bajo el título y en la pestaña Info; no en el pie del sidebar para no duplicar el branding de Streamlit Cloud)
-VERSION_APP = "1.22.3"
+VERSION_APP = "1.22.4"
 
 # Gastos de compra (sobre precio de la vivienda / ITP)
 ITP_PCT = 7.0           # Impuesto de Transmisiones Patrimoniales: % sobre precio vivienda
@@ -3136,6 +3136,28 @@ def _aplicar_sim_entrada_guardada_a_session(doc: dict, inv_id: int, inv: dict) -
         st.session_state.pop(f"entrada_amort_snapshot_{inv_id}", None)
 
 
+def _entrada_amort_snapshot_alineado(
+    snap: dict | None, capital_financiado: float, tin_pct: float, meses: int
+) -> bool:
+    """True si el snapshot del cuadro (meta) coincide con la simulación actual."""
+    if not isinstance(snap, dict) or not snap.get("filas"):
+        return False
+    meta = snap.get("meta") or {}
+    try:
+        c = float(meta.get("capital") or 0)
+        t = float(meta.get("tin") or 0)
+        m = int(meta.get("meses") or meses)
+    except (TypeError, ValueError):
+        return False
+    cap = float(capital_financiado or 0)
+    tin = float(tin_pct or 0)
+    return (
+        abs(c - cap) < 0.02
+        and abs(t - tin) < 1e-6
+        and m == int(meses)
+    )
+
+
 def _flush_pending_sim_entrada_antes_sidebar(usuario_id: int) -> None:
     doc = st.session_state.pop("_entrada_aplicar_sim_entrada", None)
     if not doc or not isinstance(doc, dict):
@@ -3688,13 +3710,25 @@ def _tab_entrada_gastos_financiacion(usuario_id: int):
     MESES_AMORT_ENTRADA = 360
     snap_key_am = f"entrada_amort_snapshot_{inv_id}"
     snap_am = st.session_state.get(snap_key_am)
+    tin_am = float(h.get("tin", 0) or 0)
+    # Si había cuadro guardado (p. ej. al cargar simulación) pero ya cambió capital/TIN/plazo, descartar snapshot.
+    if (
+        isinstance(snap_am, dict)
+        and snap_am.get("filas")
+        and financiado > 0
+        and not _entrada_amort_snapshot_alineado(snap_am, financiado, tin_am, MESES_AMORT_ENTRADA)
+    ):
+        st.session_state.pop(snap_key_am, None)
+        snap_am = None
+
     with st.expander("Cuadro de amortización francesa (30 años / 360 cuotas)", expanded=False):
-        tin_am = float(h.get("tin", 0) or 0)
         plazo_ficha = int(h.get("duracion_anos", 0) or 0)
         if financiado <= 0:
             st.caption("No hay **capital financiado**; ajusta precio y el campo de financiación/entrada.")
         else:
-            usar_snap_am = isinstance(snap_am, dict) and snap_am.get("filas")
+            usar_snap_am = isinstance(snap_am, dict) and snap_am.get("filas") and _entrada_amort_snapshot_alineado(
+                snap_am, financiado, tin_am, MESES_AMORT_ENTRADA
+            )
             if usar_snap_am:
                 meta_sn = snap_am.get("meta") or {}
                 st.caption(
@@ -4886,6 +4920,7 @@ def main():
         st.subheader("Changelog")
         st.markdown(f"**Versión actual: {VERSION_APP}**")
         st.markdown("""
+        - **1.22.4** — **Cuadro de amortización (Entrada y gastos):** si cambias precio, financiación/entrada o hipoteca, el snapshot guardado se **descarta** cuando ya no coincide con capital financiado / TIN / plazo; el cuadro y la cuota se **recalculan** al vuelo (sin depender solo de *Recalcular*).
         - **1.22.3** — **IVA 21 %** sobre la **comisión inmobiliaria** (base = comisión, no precio) sumado a **gastos de compra**; reflejado en desglose, comprobación y ofertas. **Sidebar:** desglose con IVA, **tasación** de la hipoteca elegida en *Entrada y gastos* y total coherente. **Parámetros de simulación:** botón **Guardar parámetros y cuadro (GitHub)** (misma lógica que el sidebar).
         - **1.22.2** — **Tasación objetivo** (orientativa): se calcula con el **importe financiado** del préstamo sobre el precio (no con el precio completo), supuesto 80 % de tasación; textos de ayuda actualizados.
         - **1.22.1** — **Entrada y gastos:** campo **Tasación (€)** editable (por defecto el de la hipoteca seleccionada al cambiar de producto); se **suma a gastos de compra** y entra en ofertas guardadas y snapshots de simulación. Ofertas antiguas sin `tasacion` usan el importe de la ficha de la hipoteca de la oferta al cargar.
